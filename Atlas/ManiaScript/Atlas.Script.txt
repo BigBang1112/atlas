@@ -1,0 +1,91 @@
+#RequireContext CMapEditorPlugin
+
+declare Boolean G_PreviousLeftMouse;
+declare Boolean G_IsDragging;
+declare Int3 G_DragStartCoord;
+
+Text Greet() {
+    return "Hello from Atlas!";
+}
+
+Void ConfirmGroundSelection(Int3 _StartCoord, Int3 _EndCoord) {
+    declare VoidBlockModel = GetBlockModelFromName("LagoonGrassVoid");
+    declare EdgeVoidBlockModel = GetBlockModelFromName("LagoonBeachVoid");
+    if (VoidBlockModel == Null || EdgeVoidBlockModel == Null) {
+        return;
+    }
+    PlaceTerrainBlocks(TerrainBlockModels[0], _StartCoord, _EndCoord);
+    declare MinX = _StartCoord.X;
+    declare MaxX = _EndCoord.X;
+    declare MinZ = _StartCoord.Z;
+    declare MaxZ = _EndCoord.Z;
+    if (MinX > MaxX) {
+        declare SwapX = MinX;
+        MinX = MaxX;
+        MaxX = SwapX;
+    }
+    if (MinZ > MaxZ) {
+        declare SwapZ = MinZ;
+        MinZ = MaxZ;
+        MaxZ = SwapZ;
+    }
+    for (X, MinX, MaxX) {
+        for (Z, MinZ, MaxZ) {
+            declare Coord = <X, GetGroundHeight(X, Z), Z>;
+            declare Block = GetBlock(Coord);
+            if (Block == Null) {
+                continue;
+            } else if (Block.BlockModel.Name == "Beach") {
+                PlaceBlock(EdgeVoidBlockModel, Coord, CMapEditorPlugin::CardinalDirections::North);
+            } else {
+                PlaceBlock(VoidBlockModel, Coord, CMapEditorPlugin::CardinalDirections::North);
+            }
+        }
+    }
+}
+
+Void UpdateGroundSelection() {
+    Cursor.Brightness = 0.;
+    if (!G_IsDragging) {
+        CustomSelectionRGB = <0., 0.65, 1.>;
+        CustomSelectionCoords.clear();
+        CustomSelectionCoords.add(GetMouseCoordOnGround());
+    }
+    if (Input.MouseLeftButton && !G_PreviousLeftMouse) {
+        G_DragStartCoord = GetMouseCoordOnGround();
+        G_IsDragging = True;
+    }
+    if (G_IsDragging && Input.MouseLeftButton) {
+        declare DragEndCoord = GetMouseCoordOnGround();
+        declare MinX = G_DragStartCoord.X;
+        declare MaxX = DragEndCoord.X;
+        declare MinZ = G_DragStartCoord.Z;
+        declare MaxZ = DragEndCoord.Z;
+        if (MinX > MaxX) {
+            declare Integer TupleTmp1 = MinX;
+            declare Integer TupleTmp2 = MaxX;
+            MaxX = TupleTmp1;
+            MinX = TupleTmp2;
+        }
+        if (MinZ > MaxZ) {
+            declare Integer TupleTmp3 = MinZ;
+            declare Integer TupleTmp4 = MaxZ;
+            MaxZ = TupleTmp3;
+            MinZ = TupleTmp4;
+        }
+        CustomSelectionRGB = <0., 0.65, 1.>;
+        CustomSelectionCoords.clear();
+        for (X, MinX, MaxX) {
+            for (Z, MinZ, MaxZ) {
+                CustomSelectionCoords.add(<X, GetGroundHeight(X, Z), Z>);
+            }
+        }
+    }
+    if (!Input.MouseLeftButton && G_PreviousLeftMouse && G_IsDragging) {
+        ConfirmGroundSelection(G_DragStartCoord, GetMouseCoordOnGround());
+        G_IsDragging = False;
+        CustomSelectionCoords.clear();
+    }
+    G_PreviousLeftMouse = Input.MouseLeftButton;
+}
+

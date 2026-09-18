@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <LangVersion>latest</LangVersion>
+        <Nullable>enable</Nullable>
+        <!-- This project is never executed; it only exists so the Roslyn generator runs on its source. -->
+        <OutputType>Library</OutputType>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="ManiaScriptSharp" Version="1.0.0-alpha.2" />
+        <PackageReference Include="ManiaScriptSharp.Generator" Version="1.0.0-alpha.2" OutputItemType="Analyzer" ReferenceOutputAssembly="false">
+          <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+          <PrivateAssets>all</PrivateAssets>
+        </PackageReference>
+        <PackageReference Include="ManiaScriptSharp.ManiaPlanet" Version="1.0.0-alpha.2" />
+    </ItemGroup>
+
+    <!-- Workaround for a ManiaScriptSharp 1.0.0-alpha.1 bug: the generator does not
+         emit `declare` globals for ILib classes, so the generated lib script references
+         undefined G_* variables. InjectLibGlobals.ps1 re-adds the missing declares
+         (mapped 1:1 from the lib's public fields) after every build. -->
+    <Target Name="InjectLibGlobals" AfterTargets="Build" Condition="'$(OS)' == 'Windows_NT'">
+        <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)InjectLibGlobals.ps1&quot;" />
+    </Target>
+
+</Project>
