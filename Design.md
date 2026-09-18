@@ -12,6 +12,10 @@ Project is split into 3 parts:
 
 This design centralized around the library itself, with the server and macroblocker serving as supporting components.
 
+## Base
+
+The library expects the `CMapEditorPlugin` context and its higher contexts (`CMapType`, `CTmMapType`, `CSmMapType`). It should not be allowed elsewhere.
+
 ## Event system
 
 ManiaScript natively does not support events, therefore the library exposes these events as lists that are cleared during the function call:
@@ -56,12 +60,14 @@ This can be done in several modes:
 - 3D selection on ground
   - From XYZ cursor coord to another XZ coord with the same Y and selecting every Y until the ground
   - Forming a cube thats variously cut around the ground
+  - Ground is either decided by map editor's `GetGroundHeight` or by an `Int3[]` global variable of ground positions if it's above official ground height
 - 2D selection
   - From XYZ cursor coord to another XZ coord with the same Y
   - Always forming a cube but with a height of 1
 - 2D selection on ground
   - From XZ cursor coord at ground level Y to XZ coord with possibly different Y
   - Forming a coverage of ground with a height of 1
+  - Ground is either decided by map editor's `GetGroundHeight` or by an `Int3[]` global variable of ground positions if it's above official ground height
 
 During the drag, each selection change should be reported back via an event. On mouse release, the final selection should be reported separately. The start and end coords should be also reported.
 
@@ -101,8 +107,87 @@ It then removes those coordinates from `Atlas_RemovedWater`.
 While this mode is enabled, all coordinates in `Atlas_RemovedWater` are highlighted
 as the current selection. The selection color should be brown to symbolize drought.
 
-The library needs to accept the mapping of block name for the border/terrain void blocks to water void block.
+The library needs to accept the mapping of block name for the border/terrain void blocks to water void block. Example:
 
 ```
 Atlas::SetRestoreWaterBlockMapping(["LagoonGrassVoid", "LagoonBeachVoid"], "LagoonVoid");
 ```
+
+## Item blocks
+
+Items have a very limited API:
+
+- All items are available in `Items` list (luckily)
+- Item is stored as `CItemAnchor`, which has only `Position` and `Id`, and `Id` is always `NullId`, cannot be placed or removed
+- Waypoint items are additionally stored in `AnchorData` list as `CAnchorData`, those cannot be placed but can be removed with `RemoveItem` function
+
+However, items can be contained inside a macroblock. Macroblocks should be pre-created/pre-generated before applying these methods.
+
+Such placed items are called **item blocks** in the library and are stored in a metadata variable of the map.
+
+Each item block data structure should look like this (preferably using just associative arrays for later expansion):
+
+```
+#Struct SAtlasItemBlock {
+  Text BlockName;
+  Int3 BlockCoord;
+  Vec3 ItemPosition;
+  ...
+}
+```
+
+### Macroblock creation
+
+- Each terrain item needs one macroblock
+- The item must by at the default position and rotation
+- The units of the macroblock should preferably cover the whole item accurately
+
+Macroblocks should follow the same folder structure as items, with the `Blocks\<env>\` prefix:
+
+```
+Blocks\Lagoon\Z_Bay\Z_BayDock\Z_BayDock\X_BayDocksBase1\BayDockBase1D.Macroblock.Gbx
+```
+
+`AbsolutePositionInMap` of the item placed in the macroblock should match the original item's pivot position (or just negated, to verify). The rest of the values should be zeroed.
+
+Macroblocks can contain extra script metadata, add anything that'd be useful for placement, like the block's units. Icons can be simply copied over.
+
+### Placing item blocks
+
+Place item blocks using `PlaceMacroblock_NoDestruction`. When placing the macroblock, the value of the `ItemPosition` has to be detected by checking for changes in the `Items` list, specifically when a new entry appears. The rest can be set easily.
+
+### Removing item blocks
+
+User is free to remove any item, but if the item is tracked by metadata of item blocks, or is placed at the exact same position as any other item, the state can desync.
+
+To solve this, the library loops over the `Items` every tick and checks for any change from the last instance of the list. That should give out the item position that was removed.
+
+**This caught item position should be then used to loop over the `Items` again and remove all items on that same position.** It should also be checked in the item block metadata and removed from that list. This should also throw an event that a removal of those item blocks and other untracked items happened, for example to adjust the terraforming automatically.
+
+This is a smaller inconvenience that is needed to ensure the editor doesn't desync the state and won't competely break the terraforming.
+
+### Terraforming via item blocks
+
+Selection system can be used to create terraforming. Most suitable one is **2D selection on ground** with fake ground coords to handle different item heights, as they are disconnected from real block ground heights. 
+
+Before any terrain placement, the map needs to know what items are already placed to be able to remove them correctly, and that's not so obvious.
+
+The library needs to be instructed with the initial item blocks metadata list, otherwise it becomes harder to remove them. This can be different per map base used At the start of the library usage:
+
+```
+Atlas::SetItemBlockList([...]);
+```
+
+TODO
+
+## Multiplayer editing
+
+Multiplayer editor cannot support *free* item placement at all, as it's impossible to place items precisely with ManiaScript (no it just isn't xd). So the multiplayer capability is entirely left on blocks, macroblocks, and terrain.
+
+ManiaScript supports only HTTP, so catching real-time events isn't as obvious, but is still possible with **HTTP long polling**.
+
+- Client periodically sends requests, the server doesn't respond (or responds late enough) if there are no events.
+- If no event is happening, client times out or the server sends a response of no data.
+- If an event happens, server can use the open HTTP connection to fill in the data and the client is immediately acknowledged.
+
+TODO
