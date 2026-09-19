@@ -121,7 +121,7 @@ Items have a very limited API:
 - Item is stored as `CItemAnchor`, which has only `Position` and `Id`, and `Id` is always `NullId`, cannot be placed or removed
 - Waypoint items are additionally stored in `AnchorData` list as `CAnchorData`, those cannot be placed but can be removed with `RemoveItem` function
 
-However, items can be contained inside a macroblock. Macroblocks should be pre-created/pre-generated before applying these methods.
+However, items can be contained inside a macroblock and manipulated with as the macroblock. Macroblocks should be pre-created/pre-generated before applying these methods.
 
 Such placed items are called **item blocks** in the library and are stored in a metadata variable of the map.
 
@@ -139,7 +139,7 @@ Each item block data structure should look like this (preferably using just asso
 ### Macroblock creation
 
 - Each terrain item needs one macroblock
-- The item must by at the default position and rotation
+- The item must be at the default position and rotation
 - The units of the macroblock should preferably cover the whole item accurately
 
 Macroblocks should follow the same folder structure as items, with the `Blocks\<env>\` prefix:
@@ -154,15 +154,23 @@ Macroblocks can contain extra script metadata, add anything that'd be useful for
 
 ### Placing item blocks
 
-Place item blocks using `PlaceMacroblock_NoDestruction`. When placing the macroblock, the value of the `ItemPosition` has to be detected by checking for changes in the `Items` list, specifically when a new entry appears. The rest can be set easily.
+Place item blocks using `PlaceMacroblock_NoDestruction` and store them into the `Atlas_ItemBlocks` metadata variable.
+
+When placing the macroblock, the value of the `ItemPosition` should be detected by checking for changes in the `Items` list, specifically when a new entry appears. The rest can be set easily.
 
 ### Removing item blocks
+
+Only way to remove non-waypoint items is to use `RemoveMacroblock` with the macroblock that has the item.
+
+To do so, the coord that is instructed to be removed is checked against `Atlas_ItemBlocks` and the macroblock name + direction is extracted from it. If there are multiple items on the coord, all of those macroblocks are attempted to be removed.
+
+### Syncing manually removed items
 
 User is free to remove any item, but if the item is tracked by metadata of item blocks, or is placed at the exact same position as any other item, the state can desync.
 
 To solve this, the library loops over the `Items` every tick and checks for any change from the last instance of the list. That should give out the item position that was removed.
 
-**This caught item position should be then used to loop over the `Items` again and remove all items on that same position.** It should also be checked in the item block metadata and removed from that list. This should also throw an event that a removal of those item blocks and other untracked items happened, for example to adjust the terraforming automatically.
+**This caught item position should be then used to check the `Atlas_ItemBlocks` to remove all item blocks on that same position.** This should also throw an event that a removal of those item blocks and other untracked items happened, for example to adjust the terraforming automatically.
 
 This is a smaller inconvenience that is needed to ensure the editor doesn't desync the state and won't competely break the terraforming.
 
