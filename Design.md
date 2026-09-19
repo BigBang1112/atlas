@@ -33,11 +33,18 @@ public IList<SMyEvent> MyEvents
 }
 ```
 
+## Ground system
+
+As item's ground is technically not the official ground, there are two variants that the library differentiates:
+
+- Real ground - decided only by map editor's `GetGroundHeight`
+- Fake ground - decided by an `Int3[]` global variable of ground positions if it's above official ground height, then by map editor's `GetGroundHeight`
+
 ## Selection system
 
 Selection system of Atlas is fully custom based on `CustomSelectionCoords` and is colored by `CustomSelectionRGB`, so it can be unfortunately just one color at a time.
 
-Selection can stay indefinitly or until confirming an action.
+Selection can stay indefinitely or until confirming an action.
 
 ### Current selection
 
@@ -60,20 +67,20 @@ This can be done in several modes:
 - 3D selection on ground
   - From XYZ cursor coord to another XZ coord with the same Y and selecting every Y until the ground
   - Forming a cube thats variously cut around the ground
-  - Ground is either decided by map editor's `GetGroundHeight` or by an `Int3[]` global variable of ground positions if it's above official ground height
+  - Follows ground system
 - 2D selection
   - From XYZ cursor coord to another XZ coord with the same Y
   - Always forming a cube but with a height of 1
 - 2D selection on ground
   - From XZ cursor coord at ground level Y to XZ coord with possibly different Y
   - Forming a coverage of ground with a height of 1
-  - Ground is either decided by map editor's `GetGroundHeight` or by an `Int3[]` global variable of ground positions if it's above official ground height
+  - Follows ground system
 
 During the drag, each selection change should be reported back via an event. On mouse release, the final selection should be reported separately. The start and end coords should be also reported.
 
 ### Remove water
 
-Remove water feature uses **2D selection on ground** drag selection.
+Remove water feature uses **2D selection on ground (real ground)** drag selection.
 
 On selection confirm, it first places the flat terrain, then takes the terrain void block, places it across the whole terrain part, then the same for terrain border void block on the border part.
 
@@ -93,7 +100,7 @@ Selection color should be brown to symbolize drought.
 ### Restore water
 
 Restore water is the inverse of **Remove water**. It uses the same **2D selection on
-ground** drag selection, but only operates on coordinates having the border/grass void blocks placed.
+ground (real ground)** drag selection, but only operates on coordinates having the border/grass void blocks placed.
 
 On selection confirm, the library restores water at every selected recorded
 coordinate (that have border/grass void blocks) by:
@@ -118,19 +125,19 @@ Atlas::SetRestoreWaterBlockMapping(["LagoonGrassVoid", "LagoonBeachVoid"], "Lago
 Items have a very limited API:
 
 - All items are available in `Items` list (luckily)
-- Item is stored as `CItemAnchor`, which has only `Position` and `Id`, and `Id` is always `NullId`, cannot be placed or removed
+- Item is stored as `CItemAnchor`, which has only `Position` and `Id`, and `Id` is always `NullId`, cannot be placed or even removed via function
 - Waypoint items are additionally stored in `AnchorData` list as `CAnchorData`, those cannot be placed but can be removed with `RemoveItem` function
 
 However, items can be contained inside a macroblock and manipulated with as the macroblock. Macroblocks should be pre-created/pre-generated before applying these methods.
 
 Such placed items are called **item blocks** in the library and are stored in a metadata variable of the map.
 
-Each item block data structure should look like this (preferably using just associative arrays for later expansion):
+Each item block data structure should look like this (preferably using just associative arrays instead of structs for later expansion):
 
 ```
 #Struct SAtlasItemBlock {
-  Text BlockName;
-  Int3 BlockCoord;
+  Text MacroblockName;
+  Int3 MacroblockCoord;
   Vec3 ItemPosition;
   ...
 }
@@ -152,17 +159,33 @@ Blocks\Lagoon\Z_Bay\Z_BayDock\Z_BayDock\X_BayDocksBase1\BayDockBase1D.Macroblock
 
 Macroblocks can contain extra script metadata, add anything that'd be useful for placement, like the block's units. Icons can be simply copied over.
 
+This should be implemented in **Atlas.Macroblocker**.
+
 ### Placing item blocks
 
 Place item blocks using `PlaceMacroblock_NoDestruction` and store them into the `Atlas_ItemBlocks` metadata variable.
 
 When placing the macroblock, the value of the `ItemPosition` should be detected by checking for changes in the `Items` list, specifically when a new entry appears. The rest can be set easily.
 
+In case in the future the macroblock contains more than one item, the macroblock script metadata should contain the relative position of each item and all of them should be looked up and matched with some algorithm.
+
 ### Removing item blocks
 
 Only way to remove non-waypoint items is to use `RemoveMacroblock` with the macroblock that has the item.
 
-To do so, the coord that is instructed to be removed is checked against `Atlas_ItemBlocks` and the macroblock name + direction is extracted from it. If there are multiple items on the coord, all of those macroblocks are attempted to be removed.
+An instructed item block to remove can be removed in various ways:
+
+- Only coord is provided
+  - Coord is checked against `Atlas_ItemBlocks` and the macroblock name + direction is extracted from it
+  - If there are multiple item blocks on the coord, all of those macroblocks are attempted to be removed
+- Coord and macroblock name is provided
+  - Coord and macroblock name is checked against `Atlas_ItemBlocks` and the direction is extracted from it
+  - If there are multiple same-named item blocks on the coord, all of those macroblocks are attempted to be removed
+- Coord, macroblock name, and expected direction is provided
+  - Coord, macroblock name, and direction is checked against `Atlas_ItemBlocks`
+  - If there are duplicate item blocks, all of those macroblocks are attempted to be removed
+
+Users usually want to remove items freely, so this method is usable only when automatically fixing item block placement upon item removal.
 
 ### Syncing manually removed items
 
@@ -170,21 +193,25 @@ User is free to remove any item, but if the item is tracked by metadata of item 
 
 To solve this, the library loops over the `Items` every tick and checks for any change from the last instance of the list. That should give out the item position that was removed.
 
-**This caught item position should be then used to check the `Atlas_ItemBlocks` to remove all item blocks on that same position.** This should also throw an event that a removal of those item blocks and other untracked items happened, for example to adjust the terraforming automatically.
+**This caught item position should be then used to check the `Atlas_ItemBlocks` to remove all item blocks (via `RemoveMacroblock`) on that same position.** This should also throw an event that a removal of those item blocks and other untracked items happened, for example to adjust the terraforming automatically.
 
 This is a smaller inconvenience that is needed to ensure the editor doesn't desync the state and won't competely break the terraforming.
 
-### Terraforming via item blocks
+## Terraforming with item blocks
 
-Selection system can be used to create terraforming. Most suitable one is **2D selection on ground** with fake ground coords to handle different item heights, as they are disconnected from real block ground heights. 
+Selection system can be used to create terraforming. Most suitable one is **2D selection on ground (fake ground)** to handle different item heights, as they are disconnected from real block ground heights. 
 
-Before any terrain placement, the map needs to know what items are already placed to be able to remove them correctly, and that's not so obvious.
+### Initialization
 
-The library needs to be instructed with the initial item blocks metadata list, otherwise it becomes harder to remove them. This can be different per map base used At the start of the library usage:
+Before any terrain placement, the map needs to know what item blocks are already placed to be able to remove them correctly, and that's not so obvious.
+
+The library needs to be instructed with the initial item blocks metadata list, otherwise it is basically impossible to figure out. This can be different per map base or environment, so consumer should configure it themself. At the start of the library, use:
 
 ```
 Atlas::SetItemBlockList([...]);
 ```
+
+### Placement
 
 TODO
 
