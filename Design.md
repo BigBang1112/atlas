@@ -215,6 +215,40 @@ Atlas::SetItemBlockList([...]);
 
 TODO
 
+Freeform (BayDocks, BayEsplanade):
+- [0] Base1
+- [1] Base3
+- [2] Base5
+- [3] Base7
+- [4] Base15
+- [5] Deadend
+- [6] Deadend4
+- [7] Deadend8
+- [8] Deadend12
+- [9] Corner
+- [10] Corner8
+- [11] Straight
+- [12] Cross
+
+Vertical 2x2+ (BayBuilding1):
+- [0] Cross
+- [1] TShapedSA
+- [2] TShapedE
+- [3] TShapedSB
+- [4] TShapedW
+- [5] CornerNW
+- [6] CornerNE
+- [7] CornerSE
+- [8] CornerSW
+
+Road (BayRoad, BayFlatsRoad):
+- [0] Base
+- [1] Deadend
+- [2] Corner
+- [3] Straight
+- [4] TShaped
+- [5] Cross
+
 ## Multiplayer editing
 
 Multiplayer editor cannot support *free* item placement at all, as it's impossible to place items precisely with ManiaScript (no it just isn't xd). So the multiplayer capability is entirely left on blocks, macroblocks, and terrain.

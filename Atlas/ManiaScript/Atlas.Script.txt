@@ -1,5 +1,3 @@
-#RequireContext CMapEditorPlugin
-
 declare Boolean G_PreviousLeftMouse;
 declare Boolean G_IsDragging;
 declare Int3 G_DragStartCoord;

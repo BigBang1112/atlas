@@ -6,9 +6,9 @@ public class Atlas : ILib<CMapEditorPlugin>
 {
     public required CMapEditorPlugin Context { get; init; }
 
-    public bool PreviousLeftMouse;
-    public bool IsDragging;
-    public Int3 DragStartCoord;
+    private bool previousLeftMouse;
+    private bool isDragging;
+    private Int3 dragStartCoord;
 
     public string Greet()
     {
@@ -80,25 +80,25 @@ public class Atlas : ILib<CMapEditorPlugin>
     {
         Context.Cursor.Brightness = 0f;
 
-        if (!IsDragging)
+        if (!isDragging)
         {
             Context.CustomSelectionRGB = new Vec3(0f, 0.65f, 1f);
             Context.CustomSelectionCoords.Clear();
             Context.CustomSelectionCoords.Add(Context.GetMouseCoordOnGround());
         }
 
-        if (Context.Input.MouseLeftButton && !PreviousLeftMouse)
+        if (Context.Input.MouseLeftButton && !previousLeftMouse)
         {
-            DragStartCoord = Context.GetMouseCoordOnGround();
-            IsDragging = true;
+            dragStartCoord = Context.GetMouseCoordOnGround();
+            isDragging = true;
         }
 
-        if (IsDragging && Context.Input.MouseLeftButton)
+        if (isDragging && Context.Input.MouseLeftButton)
         {
             var dragEndCoord = Context.GetMouseCoordOnGround();
-            var minX = DragStartCoord.X;
+            var minX = dragStartCoord.X;
             var maxX = dragEndCoord.X;
-            var minZ = DragStartCoord.Z;
+            var minZ = dragStartCoord.Z;
             var maxZ = dragEndCoord.Z;
             if (minX > maxX)
             {
@@ -120,13 +120,13 @@ public class Atlas : ILib<CMapEditorPlugin>
             }
         }
 
-        if (!Context.Input.MouseLeftButton && PreviousLeftMouse && IsDragging)
+        if (!Context.Input.MouseLeftButton && previousLeftMouse && isDragging)
         {
-            ConfirmGroundSelection(DragStartCoord, Context.GetMouseCoordOnGround());
-            IsDragging = false;
+            ConfirmGroundSelection(dragStartCoord, Context.GetMouseCoordOnGround());
+            isDragging = false;
             Context.CustomSelectionCoords.Clear();
         }
 
-        PreviousLeftMouse = Context.Input.MouseLeftButton;
+        previousLeftMouse = Context.Input.MouseLeftButton;
     }
 }

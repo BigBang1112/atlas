@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="Atlas.Macroblocker/Atlas.Macroblocker.csproj" />
+  <Project Path="Atlas.Server/Atlas.Server.csproj" />
+  <Project Path="Atlas/Atlas.csproj" />
+</Solution>
