@@ -205,7 +205,7 @@ This is a smaller inconvenience that is needed to ensure the editor doesn't desy
 
 Composing multiple variants of item blocks with a single placement tool requires a grouping mechanism. Such mechanism will be called **item block groups**. They are lists of macroblocks that are ordered in ways that library can successfully compose.
 
-The list is defined as `Text[][]`, where the primary list stores variants that are placed consistently, and each variant can have multiple subvariants which are purely randomized.
+The list is defined as `Text[][][]`, where the primary list stores up to 2 elements, first air variant list and second ground variant list (picked based on if selection is on ground or in air), second layer stores variant indices that are placed consistently, and each variant can have multiple subvariants which are purely randomized.
 
 Selection system can be used to place such item block groups in various ways (defined below).
 
@@ -321,6 +321,42 @@ Expected pieces:
 - [7] CornerSE
 - [8] CornerSW
 
+Expected rules:
+1. Each selected coordinate is an anchor for one 2x2 piece, and reserves its whole
+   2x2 footprint at the selected fake-ground level.
+2. Selected anchors connect only at the cube-family stride. Adjacent anchors must not
+   produce overlapping 2x2 footprints.
+3. An isolated valid anchor uses `Cross`. A connected anchor uses the piece whose open
+   sides match its cardinal neighbours: `Cross` for four sides, a `TShaped*` variant
+   for three sides, and the matching `Corner*` variant for a perpendicular pair.
+4. The family configuration defines the cardinal orientation of `TShapedSA`,
+   `TShapedE`, `TShapedSB`, and `TShapedW`; the resolver must use that explicit
+   mapping rather than infer an orientation from the name.
+5. A 2x2 or larger filled area is resolved from its outside boundary. Its outer corners
+   use the matching `Corner*` pieces, while internal anchors use the most connected
+   compatible piece.
+6. A selected anchor is invalid when any cell of its footprint is outside the map,
+   occupied by an incompatible tracked item block, or has an incompatible fake-ground
+   height or terrain connection.
+
+##### Placement resolution system
+
+Resolve this mode on an anchor grid, then expand anchors to physical map cells only
+for validation and placement:
+
+1. Snap every selected coordinate to the cube grid and reject duplicate or overlapping
+   anchors. Snapshot the tracked item blocks in every affected 2x2 footprint.
+2. Build cardinal connectivity between anchors, derive their exterior boundary, and
+   look up the family-specific connection-mask-to-piece mapping.
+3. Produce one desired state per anchor, including its piece, rotation, and four-cell
+   footprint. Resolve all anchors from the snapshot at once; no anchor may inspect a
+   partially updated neighbour.
+4. Preflight the union of all footprints. Existing tracked macroblocks that differ
+   from the desired state are replacement candidates; untracked occupants or conflicts
+   between desired footprints invalidate the entire plan.
+5. On confirmation, replace the tracked candidates and place the final macroblocks as
+   one transaction. Roll back to the snapshot if any removal or placement fails.
+
 #### 2x2 freeform
 
 - example: ?
@@ -341,6 +377,39 @@ Expected pieces:
 - [3] Straight
 - [4] TShaped
 - [5] Cross
+
+Expected rules:
+1. A road selection is an ordered, orthogonal path of fake-ground coordinates. Each
+   consecutive pair must be cardinally adjacent; diagonal jumps and gaps are invalid.
+2. A single valid coordinate uses `Base`. In a simple path, the two end coordinates use
+   `Deadend` facing the path and every intermediate coordinate uses `Straight`.
+3. A change of direction at an intermediate coordinate uses `Corner`, rotated to join
+   its predecessor and successor.
+4. When selected paths meet, use `TShaped` for three connected cardinal sides and
+   `Cross` for four. Re-visiting a coordinate is allowed only when it produces one of
+   these valid junctions.
+5. The path may join a compatible tracked road piece. The joined coordinate is resolved
+   from the combined existing and requested connection mask; it is not blindly replaced
+   by the piece required by the newly drawn segment alone.
+6. A road may not join an incompatible family, a different fake-ground height, or an
+   untracked item block. Those coordinates make the whole confirmation fail.
+
+##### Placement resolution system
+
+The road resolver converts the ordered path into a connection map before it creates any
+macroblocks:
+
+1. Record the ordered path supplied by the 1D selection, normalize it to fake-ground
+   coordinates, and collect the four-direction connection mask for every visited
+   coordinate.
+2. Merge that mask with compatible tracked road pieces already at the same coordinates.
+   Resolve masks with one table: 0 sides = `Base`, 1 = `Deadend`, opposite 2 =
+   `Straight`, perpendicular 2 = `Corner`, 3 = `TShaped`, and 4 = `Cross`.
+3. Resolve directions from the mask, not from drag order. This makes drawing the same
+   road from either end produce the same result.
+4. Diff the desired states against the tracked-road snapshot, preflight all changed
+   coordinates and terrain connections, then remove and place only the changed
+   macroblocks in one transaction. Restore the snapshot if the transaction fails.
 
 ## Multiplayer editing
 
