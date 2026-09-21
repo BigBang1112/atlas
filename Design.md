@@ -4,11 +4,12 @@ Atlas is a ManiaScript library to natively enhance map editors.
 
 ## Overview
 
-Project is split into 3 parts:
+Project is split into 4 parts:
 
 - **Atlas** - the ManiaScript library itself
 - **Atlas.Server** - host for multiplayer map editor
 - **Atlas.Macroblocker** - utility to generate macroblocks from items
+- **Atlas.Patcher** - fill missing metadata script traits from Gbx
 
 This design centralized around the library itself, with the server and macroblocker serving as supporting components.
 
@@ -66,7 +67,7 @@ This can be done in several modes:
   - Always forming a cube
 - 3D selection on ground
   - From XYZ cursor coord to another XZ coord with the same Y and selecting every Y until the ground
-  - Forming a cube thats variously cut around the ground
+  - Forming a cube that matches the ground height that cannot change within the selection
   - Follows ground system
 - 2D selection
   - From XYZ cursor coord to another XZ coord with the same Y
@@ -75,6 +76,9 @@ This can be done in several modes:
   - From XZ cursor coord at ground level Y to XZ coord with possibly different Y
   - Forming a coverage of ground with a height of 1
   - Follows ground system
+- 1D selection
+  - From XYZ cursor coord to another XYZ coord along a single axis
+  - Always forming a line
 
 During the drag, each selection change should be reported back via an event. On mouse release, the final selection should be reported separately. The start and end coords should be also reported.
 
@@ -197,13 +201,17 @@ To solve this, the library loops over the `Items` every tick and checks for any 
 
 This is a smaller inconvenience that is needed to ensure the editor doesn't desync the state and won't competely break the terraforming.
 
-## Terraforming with item blocks
+## Advanced item block placement
 
-Selection system can be used to create terraforming. Most suitable one is **2D selection on ground (fake ground)** to handle different item heights, as they are disconnected from real block ground heights. 
+Composing multiple variants of item blocks with a single placement tool requires a grouping mechanism. Such mechanism will be called **item block groups**. They are lists of macroblocks that are ordered in ways that library can successfully compose.
+
+The list is defined as `Text[][]`, where the primary list stores variants that are placed consistently, and each variant can have multiple subvariants which are purely randomized.
+
+Selection system can be used to place such item block groups in various ways (defined below).
 
 ### Initialization
 
-Before any terrain placement, the map needs to know what item blocks are already placed to be able to remove them correctly, and that's not so obvious.
+Before any item block placement, the map needs to know what item blocks are already placed to be able to remove them correctly, and that's not so obvious.
 
 The library needs to be instructed with the initial item blocks metadata list, otherwise it is basically impossible to figure out. This can be different per map base or environment, so consumer should configure it themself. At the start of the library, use:
 
@@ -213,9 +221,16 @@ Atlas::SetItemBlockList([...]);
 
 ### Placement
 
-TODO
+Build the complete placement plan before placing any item block so that there is no risk of partial placements.
 
-Freeform (BayDocks, BayEsplanade):
+A few different modes should exist to handle different placement scenarios.
+
+#### 1x1 freeform
+
+- example: BayDocks, BayEsplanade, StadiumDirtBorder
+- 2D selection on ground
+
+Expected pieces:
 - [0] Base1
 - [1] Base3
 - [2] Base5
@@ -228,9 +243,30 @@ Freeform (BayDocks, BayEsplanade):
 - [9] Corner
 - [10] Corner8
 - [11] Straight
-- [12] Cross
+- [12] TShaped
+- [13] Cross
 
-Vertical 2x2+ (BayBuilding1):
+Expected rules:
+1. If only 1 coord is selected and nothing occupies it already, place Cross
+2. If a line is selected with no connections, place TShaped pieces at the start and end mirrored, fill the line with Straight
+3. If a line joins TShaped in the same direction or the mirrored one, it should change to Straight
+4. If a line *start/end* coord occupies TShaped in a +1/-1 direction, Corner8 should be placed
+5. If a line is placed *across* a TShaped that is a +1/-1 direction, Deadend12 should be placed
+6. If a 2x2 is selected and nothing occupies it already, place Corner on all 4 coords with each of the directions
+7. If a line *start/end* coord occupies Corner, Deadend4 or Deadend8 should be placed according to each of the directions
+8. If at least 3x2 or 2x3 is formed, Deadend should be placed between Corner
+9. If a straight line occupies another straight line that is a +1/-1 direction, Base15 should be placed
+10. If Corner8 is formed opposite to Corner on the same coord, Base7 should be placed
+11. If Corner is formed opposite to Corner on the same coord, Base5 should be placed
+12. If TShaped or Straight is "expected" to be placed on Deadend, Base3 should be placed
+13. If Corner gets expanded in one direction, it should turn into Base1
+
+#### 2x2 cube
+
+- example: BayBuilding1
+- 3D selection on ground
+
+Expected pieces:
 - [0] Cross
 - [1] TShapedSA
 - [2] TShapedE
@@ -241,7 +277,20 @@ Vertical 2x2+ (BayBuilding1):
 - [7] CornerSE
 - [8] CornerSW
 
-Road (BayRoad, BayFlatsRoad):
+#### 2x2 freeform
+
+- example: ?
+- 2D selection on ground
+
+Expected pieces:
+- ?
+
+#### Road
+
+- example: BayRoad, BayFlatsRoad
+- 1D selection
+
+Expected pieces:
 - [0] Base
 - [1] Deadend
 - [2] Corner
