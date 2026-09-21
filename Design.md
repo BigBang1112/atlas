@@ -261,6 +261,50 @@ Expected rules:
 12. If TShaped or Straight is "expected" to be placed on Deadend, Base3 should be placed
 13. If Corner gets expanded in one direction, it should turn into Base1
 
+#### Placement resolution system (AI)
+
+Treat a placement as a state-resolution problem, not as a sequence of immediate
+macroblock placements. This prevents the outcome from depending on which selected
+coordinate happens to be processed first.
+
+1. On every selection update, create a read-only snapshot of the selected fake-ground
+   coordinates and of the tracked item blocks already at those coordinates. A tracked
+   piece is represented by its family, piece index, and cardinal direction. An
+   untracked item block is a placement conflict, because Atlas cannot safely replace it.
+2. Convert the selected coordinates into a topology: connected components, cardinal
+   edges, line starts/ends, perpendicular crossings, 2x2 areas, and area boundaries.
+   Keep the topology separate from the current placed pieces; the selection describes
+   the requested addition, while the snapshot describes what it joins or overlays.
+3. Produce a default desired state for every affected coordinate: a single cell becomes
+   `Cross`, a standalone line becomes `TShaped`/`Straight`/mirrored `TShaped`, and an
+   empty 2x2 becomes four outward-facing `Corner` pieces. Give every desired state an
+   explicit cardinal direction.
+4. Resolve rules 3-13 against the complete snapshot and desired-state map. Rules add
+   candidate results rather than changing a coordinate in place. More specific overlay
+   outcomes (`Base15`, `Base7`, `Base5`, and `Base3`) win over boundary outcomes;
+   boundary outcomes win over the default line or area result. If equally specific
+   candidates disagree, mark the coordinate as a conflict instead of choosing one
+   arbitrarily.
+5. Apply the candidates simultaneously to produce the next desired-state map. Repeat
+   this resolution pass until the map is unchanged. If a state repeats or a conflict is
+   found, the selection is invalid and cannot be confirmed. This handles chained rules,
+   such as a line first changing a `TShaped` to `Straight` and then creating an overlay
+   piece, without relying on iteration order.
+6. Compare the final desired-state map with the snapshot and build a transaction:
+   unchanged pieces are retained, tracked pieces with a different state are removed,
+   and missing pieces are placed. Preflight all operations, including map bounds,
+   macroblock footprints, fake-ground height, and every exposed terrain connection.
+7. Only confirm the transaction when every operation is valid. Remove the required
+   tracked macroblocks, place the replacements with `PlaceMacroblock_NoDestruction`,
+   and update `Atlas_ItemBlocks` as one logical operation. If any operation fails,
+   restore every removed piece from the saved snapshot and leave the map unchanged.
+
+During a drag, the system may resolve the current selection to provide a preview, but
+must not change the map. It runs the transaction only after the selection-confirm
+event. The final selected coordinates remain the source of truth for the placement
+plan, so future extensions can use the same resolver for roads and 2x2 families with
+their own topology-to-piece rule tables.
+
 #### 2x2 cube
 
 - example: BayBuilding1
