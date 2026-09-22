@@ -82,6 +82,10 @@ This can be done in several modes:
 
 During the drag, each selection change should be reported back via an event. On mouse release, the final selection should be reported separately. The start and end coords should be also reported.
 
+### Tower selection
+
+When enabled, it automatically selects a defined XZ region and fills the Y selection down to the ground whereever mouse is moved. Clicking approves the region to work with.
+
 ### Remove water
 
 Remove water feature uses **2D selection on ground (real ground)** drag selection.
@@ -225,12 +229,20 @@ Build the complete placement plan before placing any item block so that there is
 
 A few different modes should exist to handle different placement scenarios.
 
+Sometimes it is useful to use bitwise operations to determine neighbors. ManiaScript doesn't support such operations, so play with traditional integer operations to replicate bits.
+
 #### 1x1 freeform
 
-- example: BayDocks, BayEsplanade, StadiumDirtBorder
 - 2D selection on ground
+- Official equivalent example: StadiumDirtBorder
+- List of expected blocks:
+  - BayDocks
+  - BayEsplanade
+  - BayUrbanStores
+  - BayUrbanTrench
+  - BayUrbanPark
 
-Expected pieces:
+Expected pieces ([Index] [Id]):
 - [0] Base1
 - [1] Base3
 - [2] Base5
@@ -261,7 +273,7 @@ Expected rules:
 12. If TShaped or Straight is "expected" to be placed on Deadend, Base3 should be placed
 13. If Corner gets expanded in one direction, it should turn into Base1
 
-#### Placement resolution system (AI)
+#### Placement resolution system (AI generated text)
 
 Treat a placement as a state-resolution problem, not as a sequence of immediate
 macroblock placements. This prevents the outcome from depending on which selected
@@ -305,12 +317,15 @@ event. The final selected coordinates remain the source of truth for the placeme
 plan, so future extensions can use the same resolver for roads and 2x2 families with
 their own topology-to-piece rule tables.
 
-#### 2x2 cube
+#### 2x2 cube (any height)
 
-- example: BayBuilding1
 - 3D selection on ground
+- Official equivalent example: StadiumInflatable
+- List of expected blocks:
+  - BayBuilding1
+  - BayBuilding2
 
-Expected pieces:
+Expected pieces ([Index] [Id]):
 - [0] Cross
 - [1] TShapedSA
 - [2] TShapedE
@@ -322,10 +337,9 @@ Expected pieces:
 - [8] CornerSW
 
 Expected rules:
-1. Each selected coordinate is an anchor for one 2x2 piece, and reserves its whole
-   2x2 footprint at the selected fake-ground level.
-2. Selected anchors connect only at the cube-family stride. Adjacent anchors must not
-   produce overlapping 2x2 footprints.
+1. Minimal placement region allowed is 2x2
+2. Such item block group is typically divided into 3 layers: bottom, middle, top
+3. Placement must always form a cube as a final result, not any other complex shape
 3. An isolated valid anchor uses `Cross`. A connected anchor uses the piece whose open
    sides match its cardinal neighbours: `Cross` for four sides, a `TShaped*` variant
    for three sides, and the matching `Corner*` variant for a perpendicular pair.
@@ -357,18 +371,35 @@ for validation and placement:
 5. On confirmation, replace the tracked candidates and place the final macroblocks as
    one transaction. Roll back to the snapshot if any removal or placement fails.
 
-#### 2x2 freeform
+#### 2x2 freeform (any height)
 
-- example: ?
 - 2D selection on ground
+- List of expected blocks:
+  - BayUrbanMall
 
 Expected pieces:
-- ?
+- [0] Cross
+- [1] TShaped
+- [2] Corner
+- [3] Base1
+
+Expected rules:
+1. Minimal placement region allowed is 2x2
+2. Such item block group is typically divided into 3 layers: bottom, middle, top
+3. Placement can be connected variously with the same type of block, but always have to be at least 2x2
 
 #### Road
 
-- example: BayRoad, BayFlatsRoad
 - 1D selection
+- List of expected blocks:
+  - BayRoad
+  - BayRoadSupport
+  - BayBridgeRoad
+  - BayBridgeRoadSupport
+  - BayFlatsRoad
+  - BayFlatsRoad2
+  - BayTrenchRoad
+  - BayTunnelRoad
 
 Expected pieces:
 - [0] Base
@@ -411,6 +442,17 @@ macroblocks:
    coordinates and terrain connections, then remove and place only the changed
    macroblocks in one transaction. Restore the snapshot if the transaction fails.
 
+#### Tower
+
+Uses tower selection to place structures based on cursor's height. Such blocks can be 1x1 on XZ size or more (their sizes are defined by the item block group itself, there should be a parameter to define such resolution).
+
+Such item block group is typically divided into 3 layers: bottom, middle, top.
+
+List of expected blocks:
+- BayUrbanBuildingMedical
+- BayUrbanBuildingFinance
+- BayUrbanBuildingBusiness
+
 ## Multiplayer editing
 
 Multiplayer editor cannot support *free* item placement at all, as it's impossible to place items precisely with ManiaScript (no it just isn't xd). So the multiplayer capability is entirely left on blocks, macroblocks, and terrain.
@@ -421,4 +463,4 @@ ManiaScript supports only HTTP, so catching real-time events isn't as obvious, b
 - If no event is happening, client times out or the server sends a response of no data.
 - If an event happens, server can use the open HTTP connection to fill in the data and the client is immediately acknowledged.
 
-TODO
+ManiaScript's default HTTP timeout is 30 seconds, so it is preferable to stay under this limit (somewhere around 20 seconds). Client requests the same endpoint again after completion of the previous endpoint while such session is running.

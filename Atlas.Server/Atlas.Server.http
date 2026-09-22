@@ -4,3 +4,22 @@ GET {{Atlas.Server_HostAddress}}/weatherforecast/
 Accept: application/json
 
 ###
+
+GET {{Atlas.Server_HostAddress}}/events/next?clientId=editor-a
+Accept: application/json
+
+###
+
+POST {{Atlas.Server_HostAddress}}/events
+Content-Type: application/json
+
+{
+	"type": "selection.changed",
+	"data": {
+		"x": 12,
+		"y": 4,
+		"z": 8
+	}
+}
+
+###
