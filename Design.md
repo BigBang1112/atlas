@@ -39,7 +39,7 @@ public IList<SMyEvent> MyEvents
 As item's ground is technically not the official ground, there are two variants that the library differentiates:
 
 - Real ground - decided only by map editor's `GetGroundHeight`
-- Fake ground - decided by an `Int3[]` global variable of ground positions if it's above official ground height, then by map editor's `GetGroundHeight`
+- Fake ground - decided by item blocks whose `Ground` field is `True`. At a given XZ coordinate, the highest qualifying item block above real ground defines fake-ground height. If none qualifies, fake ground is real ground.
 
 ## Selection system
 
@@ -146,7 +146,9 @@ Each item block data structure should look like this (preferably using just asso
 #Struct SAtlasItemBlock {
   Text MacroblockName;
   Int3 MacroblockCoord;
+  CardinalDirections MacroblockDir;
   Vec3 ItemPosition;
+  Boolean Ground;
   ...
 }
 ```
@@ -464,3 +466,142 @@ ManiaScript supports only HTTP, so catching real-time events isn't as obvious, b
 - If an event happens, server can use the open HTTP connection to fill in the data and the client is immediately acknowledged.
 
 ManiaScript's default HTTP timeout is 30 seconds, so it is preferable to stay under this limit (somewhere around 20 seconds). Client requests the same endpoint again after completion of the previous endpoint while such session is running.
+
+### Client/server protocol
+
+The server is the authoritative sequencer for a map-editing session. The editor client
+does not send raw map mutations over HTTP; it sends an intent that Atlas can validate
+against the same map revision seen by the client. The server assigns every accepted
+operation a monotonically increasing sequence number and distributes the resulting
+operation to every connected editor, including its author.
+
+Each client receives a session-specific `ClientId` when it joins a map-editing session.
+It persists a generated `OperationId` while retrying the same request. This lets the
+server recognize a retry without applying the edit twice.
+
+#### Join session
+
+Client sends:
+
+```text
+POST /sessions/{sessionId}/join
+{
+   "displayName": "Builder"
+}
+```
+
+Server returns the client identity, current revision, and a snapshot needed to render
+the authoritative state:
+
+```text
+200 OK
+{
+   "clientId": "client-7f3a",
+   "revision": 184,
+   "itemBlocks": [ ... ],
+   "removedWater": [ ... ]
+}
+```
+
+The snapshot includes metadata controlled by Atlas. The client reads the actual map
+through the editor API and must not treat the snapshot as a replacement for it.
+
+#### Submit an edit
+
+Client sends one fully described intent after local preview and confirmation:
+
+```text
+POST /sessions/{sessionId}/operations
+{
+   "operationId": "8d66c2f4-9ea1-4a2d-a4f5-3c932f6e1aa1",
+   "clientId": "client-7f3a",
+   "baseRevision": 184,
+   "kind": "PlaceRoad",
+   "payload": {
+      "family": "BayRoad",
+      "path": [ [12, 4, 30], [13, 4, 30], [14, 4, 30] ]
+   }
+}
+```
+
+`payload` is specific to the operation kind. It contains immutable user intent, such
+as selection coordinates, the selected family, or the requested water operation; it
+does not contain client-computed macroblock removals or placements. The server
+re-resolves the intent against its current map snapshot and either commits one complete
+transaction or rejects it.
+
+Server returns exactly one of:
+
+```text
+202 Accepted
+{
+   "operationId": "8d66c2f4-9ea1-4a2d-a4f5-3c932f6e1aa1",
+   "sequence": 185,
+   "revision": 185,
+   "status": "committed"
+}
+```
+
+```text
+409 Conflict
+{
+   "operationId": "8d66c2f4-9ea1-4a2d-a4f5-3c932f6e1aa1",
+   "revision": 186,
+   "reason": "stale-revision"
+}
+```
+
+```text
+422 Unprocessable Content
+{
+   "operationId": "8d66c2f4-9ea1-4a2d-a4f5-3c932f6e1aa1",
+   "revision": 184,
+   "reason": "invalid-placement",
+   "conflicts": [ [14, 4, 30] ]
+}
+```
+
+`409` means the client must process events through the returned revision and may submit
+a newly resolved intent. `422` means the intent is invalid at the supplied revision;
+the map and Atlas metadata have not changed. Repeating a request with an already
+committed `OperationId` returns its original acceptance response.
+
+#### Receive edits with long polling
+
+Client maintains one outstanding request while connected:
+
+```text
+GET /sessions/{sessionId}/events?clientId=client-7f3a&after=184&waitSeconds=20
+```
+
+The `after` value is the greatest event sequence fully applied by the client. The
+server responds immediately when later events exist, when 20 seconds elapse, or when
+the session is closed:
+
+```text
+200 OK
+{
+   "events": [
+      {
+         "sequence": 185,
+         "operationId": "8d66c2f4-9ea1-4a2d-a4f5-3c932f6e1aa1",
+         "authorClientId": "client-7f3a",
+         "kind": "PlaceRoad",
+         "resolvedChanges": {
+            "removedItemBlocks": [ ... ],
+            "placedItemBlocks": [ ... ],
+            "removedWater": [ ... ]
+         }
+      }
+   ],
+   "revision": 185
+}
+```
+
+The client applies events strictly in sequence order, then opens the next poll with the
+last applied sequence. It receives its own committed event too, allowing every editor
+to use one application path. A timeout response is `200 OK` with an empty `events`
+list and the unchanged revision. If the requested sequence is older than the server's
+retained event history, the server returns `410 Gone` with a fresh Atlas metadata
+snapshot; the client replaces its local metadata and resumes polling from that
+revision.
