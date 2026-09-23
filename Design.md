@@ -201,7 +201,59 @@ Users usually want to remove items freely, so this method is usable only when au
 
 User is free to remove any item, but if the item is tracked by metadata of item blocks, or is placed at the exact same position as any other item, the state can desync.
 
-To solve this, the library loops over the `Items` every tick and checks for any change from the last instance of the list. That should give out the item position that was removed.
+To solve this, the library loops over the `Items` every tick and checks for any change from the last instance of the list. That should give out the item position that was removed. This is how it should be done:
+
+```cs
+private readonly List<Vec3> previousItems = [];
+
+public void Main()
+{
+   foreach (var item in Items)
+   {
+      previousItems.Add(item.Position);
+   }
+}
+
+public void Loop()
+{
+   if (Items.Count > previousItems.Count)
+   {
+      for (var i = previousItems.Count; i < Items.Count; i++)
+      {
+         var item = () => Items[i];
+         Console.WriteLine("Item added at " + item().Position);
+         previousItems.Add(item().Position);
+      }
+   }
+   else if (Items.Count < previousItems.Count)
+   {
+      var currentItemPositions = new Dictionary<Vec3, int>();
+      foreach (var item in Items)
+      {
+         if (!currentItemPositions.ContainsKey(item.Position))
+         {
+            currentItemPositions[item.Position] = 0;
+         }
+         currentItemPositions[item.Position]++;
+      }
+
+      for (var i = previousItems.Count - 1; i >= 0; i--)
+      {
+         var position = previousItems[i];
+         
+         if (!currentItemPositions.ContainsKey(position) || currentItemPositions[position] == 0)
+         {
+            Console.WriteLine("Item removed at " + position);
+            previousItems.RemoveAt(i);
+         }
+         else
+         {
+            currentItemPositions[position]--;
+         }
+      }
+   }
+}
+```
 
 **This caught item position should be then used to check the `Atlas_ItemBlocks` to remove all item blocks (via `RemoveMacroblock`) on that same position.** This should also throw an event that a removal of those item blocks and other untracked items happened, for example to adjust the terraforming automatically.
 
