@@ -146,7 +146,7 @@ Each item block data structure should look like this (preferably using just asso
 #Struct SAtlasItemBlock {
   Text MacroblockName;
   Int3 MacroblockCoord;
-  CardinalDirections MacroblockDir;
+  Integer MacroblockDir; // 0=North, 1=East, 2=South, 3=West
   Vec3 ItemPosition;
   Boolean Ground;
   ...
