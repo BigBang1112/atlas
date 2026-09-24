@@ -1,15 +1,11 @@
 using Atlas.Libs;
 
-namespace Atlas.EditorPlugins;
+namespace Atlas.MapTypes;
 
-/// <summary>
-/// A runnable map-editor context showing how to host the Atlas library.
-/// Change the block names below to match the map environment before using water modes.
-/// </summary>
-public class AtlasExamplePlugin : CMapEditorPlugin, IContext
+public class AtlasMapType : CMapType, IContext
 {
     private readonly AtlasEngine atlas = new();
-
+    
     public void Main()
     {
         // These example names are for Lagoon. Water modes require valid block names.
@@ -22,7 +18,7 @@ public class AtlasExamplePlugin : CMapEditorPlugin, IContext
             new List<string> { "LagoonGrassVoid", "LagoonBeachVoid" }, "LagoonVoid");
 
         atlas.Initialize();
-        atlas.SetSelectionMode(AtlasEngine.SelectionMode.Ground2D);
+        atlas.SetSelectionMode(AtlasEngine.SelectionMode.Box3D);
         Log("Atlas example ready: drag on the ground to select cells.");
     }
 
@@ -40,9 +36,4 @@ public class AtlasExamplePlugin : CMapEditorPlugin, IContext
         foreach (var removal in atlas.ItemRemovals)
             Log($"Item removed at {removal.Position}");
     }
-
-    // Call these from your own editor UI, or choose one in Main(), to switch tools.
-    public void SelectGround() => atlas.SetSelectionMode(AtlasEngine.SelectionMode.Ground2D);
-    public void RemoveWater() => atlas.SetSelectionMode(AtlasEngine.SelectionMode.RemoveWater);
-    public void RestoreWater() => atlas.SetSelectionMode(AtlasEngine.SelectionMode.RestoreWater);
 }

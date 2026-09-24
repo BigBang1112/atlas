@@ -1,6 +1,3 @@
-using System.Collections.Generic;
-using ManiaScriptSharp;
-using Atlas.Libs;
 #nullable disable
 
 namespace Atlas.Libs;

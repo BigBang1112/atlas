@@ -1,0 +1,22 @@
+#RequireContext CMapType
+
+#Include "Libs/AtlasEngine.Script.txt" as Atlas
+
+Atlas::SetRemoveWaterBlockMapping(["Grass" => "LagoonGrassVoid", "Beach" => "LagoonBeachVoid"]);
+Atlas::SetRestoreWaterBlockMapping(["LagoonGrassVoid", "LagoonBeachVoid"], "LagoonVoid");
+Atlas::Initialize();
+Atlas::SetSelectionMode(Atlas::C_SelectionMode_Box3D);
+log("Atlas example ready: drag on the ground to select cells.");
+while (True) {
+  yield;
+  Atlas::Update();
+  foreach (Change in Atlas::GetSelectionChanged()) {
+    log("Selection preview: " ^ Change.Coords.count ^ " cells");
+  }
+  foreach (Change in Atlas::GetSelectionConfirmed()) {
+    log("Selection confirmed: " ^ Change.Coords.count ^ " cells");
+  }
+  foreach (Removal in Atlas::GetItemRemovals()) {
+    log("Item removed at " ^ Removal.Position);
+  }
+}

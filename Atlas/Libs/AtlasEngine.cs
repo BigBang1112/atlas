@@ -1,13 +1,9 @@
-using System;
-using System.Collections.Generic;
-using ManiaScriptSharp;
-
 namespace Atlas.Libs;
 
 /// <summary>Editor-side map tools. Call Update once per editor frame.</summary>
 public class AtlasEngine : CMapEditorPlugin, ILib
 {
-    public MathLib MathLib;
+    private readonly MathLib mathLib = new();
 
     public enum SelectionMode
     {
@@ -76,6 +72,8 @@ public class AtlasEngine : CMapEditorPlugin, ILib
     private int towerWidth;
     private int towerDepth;
     private bool lastRollbackFailed;
+    private readonly List<Int3> lastSelectionChange = [];
+    private bool hasLastSelectionChange;
     private readonly List<SelectionChange> selectionChanged = [];
     private readonly List<SelectionChange> selectionConfirmed = [];
     private readonly List<ItemRemoval> itemRemovals = [];
@@ -126,6 +124,28 @@ public class AtlasEngine : CMapEditorPlugin, ILib
 
     private static bool SameCoord(Int3 a, Int3 b) => a.X == b.X && a.Y == b.Y && a.Z == b.Z;
     private static bool SamePosition(Vec3 a, Vec3 b) => a.X == b.X && a.Y == b.Y && a.Z == b.Z;
+
+    private void ResetSelectionChangeTracking()
+    {
+        lastSelectionChange.Clear();
+        hasLastSelectionChange = false;
+    }
+
+    private bool SelectionChangedSinceLastEvent(IList<Int3> coords)
+    {
+        if (hasLastSelectionChange && lastSelectionChange.Count == coords.Count)
+        {
+            var matches = true;
+            for (var i = 0; i < coords.Count; i++)
+                if (!SameCoord(lastSelectionChange[i], coords[i])) { matches = false; break; }
+            if (matches) return false;
+        }
+
+        lastSelectionChange.Clear();
+        foreach (var coord in coords) lastSelectionChange.Add(coord);
+        hasLastSelectionChange = true;
+        return true;
+    }
 
     private static bool SameItemBlock(ItemBlock a, ItemBlock b) =>
         a.MacroblockName == b.MacroblockName &&
@@ -230,8 +250,11 @@ public class AtlasEngine : CMapEditorPlugin, ILib
     public void SetFlatTerrainBlockName(string name) => flatTerrainName = name;
     public void SetTowerSelectionSize(int width, int depth)
     {
-        towerWidth = Math.Max(1, width);
-        towerDepth = Math.Max(1, depth);
+        var nextWidth = Math.Max(1, width);
+        var nextDepth = Math.Max(1, depth);
+        if (towerWidth != nextWidth || towerDepth != nextDepth) ResetSelectionChangeTracking();
+        towerWidth = nextWidth;
+        towerDepth = nextDepth;
     }
     public int GetRealGroundHeight(int x, int z) => GetGroundHeight(x, z);
 
@@ -249,6 +272,7 @@ public class AtlasEngine : CMapEditorPlugin, ILib
 
     public void SetSelectionMode(SelectionMode nextMode)
     {
+        if (mode != nextMode) ResetSelectionChangeTracking();
         mode = nextMode;
         dragging = false;
         if (nextMode == SelectionMode.RemoveWater || nextMode == SelectionMode.RestoreWater)
@@ -306,7 +330,8 @@ public class AtlasEngine : CMapEditorPlugin, ILib
                 cursorCoord.Z + Math.Max(1, towerDepth) - 1);
             var towerCoords = BuildSelection(cursorCoord, towerEnd, SelectionMode.Tower);
             DrawPreview(towerCoords);
-            selectionChanged.Add(new SelectionChange { Start = cursorCoord, End = towerEnd, Coords = towerCoords });
+            if (SelectionChangedSinceLastEvent(towerCoords))
+                selectionChanged.Add(new SelectionChange { Start = cursorCoord, End = towerEnd, Coords = towerCoords });
             if (pressed && !previousMouseDown)
             {
                 selectionConfirmed.Add(new SelectionChange { Start = cursorCoord, End = towerEnd, Coords = towerCoords });
@@ -315,14 +340,19 @@ public class AtlasEngine : CMapEditorPlugin, ILib
             previousMouseDown = pressed;
             return;
         }
-        if (pressed && !previousMouseDown) { dragStart = cursorCoord; dragging = true; }
+        if (pressed && !previousMouseDown)
+        {
+            dragStart = cursorCoord;
+            dragging = true;
+            ResetSelectionChangeTracking();
+        }
         if (dragging)
         {
             var coords = BuildSelection(dragStart, cursorCoord, mode);
             var change = new SelectionChange { Start = dragStart, End = cursorCoord, Coords = coords };
             if (pressed)
             {
-                selectionChanged.Add(change);
+                if (SelectionChangedSinceLastEvent(coords)) selectionChanged.Add(change);
                 DrawPreview(coords);
             }
             else

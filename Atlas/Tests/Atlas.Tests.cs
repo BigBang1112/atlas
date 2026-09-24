@@ -1,5 +1,3 @@
-using System;
-using ManiaScriptSharp;
 using Atlas.Libs;
 
 namespace Atlas.Tests;

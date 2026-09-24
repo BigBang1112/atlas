@@ -1,54 +1,54 @@
 #Include "MathLib" as MathLib
 
 #Struct SelectionChange {
-    Int3 Start;
-    Int3 End;
-    Int3[] Coords;
+  Int3 Start;
+  Int3 End;
+  Int3[] Coords;
 }
 
 #Struct ItemBlock {
-    Text MacroblockName;
-    Int3 MacroblockCoord;
-    Integer MacroblockDir;
-    Vec3 ItemPosition;
-    Boolean Ground;
-    Text Family;
-    Integer PieceIndex;
-    Integer Width;
-    Integer Depth;
+  Text MacroblockName;
+  Int3 MacroblockCoord;
+  Integer MacroblockDir;
+  Vec3 ItemPosition;
+  Boolean Ground;
+  Text Family;
+  Integer PieceIndex;
+  Integer Width;
+  Integer Depth;
 }
 
 #Struct ItemRemoval {
-    Vec3 Position;
-    ItemBlock[] RemovedBlocks;
+  Vec3 Position;
+  ItemBlock[] RemovedBlocks;
 }
 
 #Struct Placement {
-    Int3 Coord;
-    Text MacroblockName;
-    CMapEditorPlugin::CardinalDirections Direction;
-    Boolean Ground;
-    Text Family;
-    Integer PieceIndex;
-    Integer Width;
-    Integer Depth;
+  Int3 Coord;
+  Text MacroblockName;
+  CMapEditorPlugin::CardinalDirections Direction;
+  Boolean Ground;
+  Text Family;
+  Integer PieceIndex;
+  Integer Width;
+  Integer Depth;
 }
 
 #Struct FreeformCandidate {
-    Integer Piece;
-    CMapEditorPlugin::CardinalDirections Direction;
-    Integer Priority;
+  Integer Piece;
+  CMapEditorPlugin::CardinalDirections Direction;
+  Integer Priority;
 }
 
-#Const C_Atlas_Libs_AtlasEngine_SelectionMode_None 0
-#Const C_Atlas_Libs_AtlasEngine_SelectionMode_Box3D 1
-#Const C_Atlas_Libs_AtlasEngine_SelectionMode_BoxToGround 2
-#Const C_Atlas_Libs_AtlasEngine_SelectionMode_Plane2D 3
-#Const C_Atlas_Libs_AtlasEngine_SelectionMode_Ground2D 4
-#Const C_Atlas_Libs_AtlasEngine_SelectionMode_Line1D 5
-#Const C_Atlas_Libs_AtlasEngine_SelectionMode_Tower 6
-#Const C_Atlas_Libs_AtlasEngine_SelectionMode_RemoveWater 7
-#Const C_Atlas_Libs_AtlasEngine_SelectionMode_RestoreWater 8
+#Const C_SelectionMode_None 0
+#Const C_SelectionMode_Box3D 1
+#Const C_SelectionMode_BoxToGround 2
+#Const C_SelectionMode_Plane2D 3
+#Const C_SelectionMode_Ground2D 4
+#Const C_SelectionMode_Line1D 5
+#Const C_SelectionMode_Tower 6
+#Const C_SelectionMode_RemoveWater 7
+#Const C_SelectionMode_RestoreWater 8
 
 declare Int3[] G_CurrentSelection;
 declare Boolean G_SelectionVisible;
@@ -59,6 +59,8 @@ declare Integer G_Mode;
 declare Integer G_TowerWidth;
 declare Integer G_TowerDepth;
 declare Boolean G_LastRollbackFailed;
+declare Int3[] G_LastSelectionChange;
+declare Boolean G_HasLastSelectionChange;
 declare SelectionChange[] G_SelectionChanged;
 declare SelectionChange[] G_SelectionConfirmed;
 declare ItemRemoval[] G_ItemRemovals;
@@ -71,1492 +73,1531 @@ declare Text[][][][Text] G_ItemBlockGroups;
 declare Integer[Integer][Text] G_CubePieceMapping;
 
 Boolean Private_SameCoord(Int3 _A, Int3 _B) {
-    return _A.X == _B.X && _A.Y == _B.Y && _A.Z == _B.Z;
+  return _A.X == _B.X && _A.Y == _B.Y && _A.Z == _B.Z;
 }
 
 Boolean Private_SamePosition(Vec3 _A, Vec3 _B) {
-    return _A.X == _B.X && _A.Y == _B.Y && _A.Z == _B.Z;
+  return _A.X == _B.X && _A.Y == _B.Y && _A.Z == _B.Z;
+}
+
+Void Private_ResetSelectionChangeTracking() {
+  G_LastSelectionChange.clear();
+  G_HasLastSelectionChange = False;
+}
+
+Boolean Private_SelectionChangedSinceLastEvent(Int3[] _Coords) {
+  if (G_HasLastSelectionChange && G_LastSelectionChange.count == _Coords.count) {
+    declare Matches = True;
+    for (I, 0, _Coords.count - 1) {
+      if (!Private_SameCoord(G_LastSelectionChange[I], _Coords[I])) {
+        Matches = False;
+        break;
+      }
+    }
+    if (Matches) {
+      return False;
+    }
+  }
+  G_LastSelectionChange.clear();
+  foreach (Coord in _Coords) {
+    G_LastSelectionChange.add(Coord);
+  }
+  G_HasLastSelectionChange = True;
+  return True;
 }
 
 Boolean Private_SameItemBlock(ItemBlock _A, ItemBlock _B) {
-    return _A.MacroblockName == _B.MacroblockName && Private_SameCoord(_A.MacroblockCoord, _B.MacroblockCoord) && _A.MacroblockDir == _B.MacroblockDir && Private_SamePosition(_A.ItemPosition, _B.ItemPosition) && _A.Ground == _B.Ground && _A.Family == _B.Family && _A.PieceIndex == _B.PieceIndex && _A.Width == _B.Width && _A.Depth == _B.Depth;
+  return _A.MacroblockName == _B.MacroblockName && Private_SameCoord(_A.MacroblockCoord, _B.MacroblockCoord) && _A.MacroblockDir == _B.MacroblockDir && Private_SamePosition(_A.ItemPosition, _B.ItemPosition) && _A.Ground == _B.Ground && _A.Family == _B.Family && _A.PieceIndex == _B.PieceIndex && _A.Width == _B.Width && _A.Depth == _B.Depth;
 }
 
 Integer Private_IndexOfItemBlock(ItemBlock[] _Blocks, ItemBlock _Target) {
-    for (Index, 0, _Blocks.count - 1) {
-        if (Private_SameItemBlock(_Blocks[Index], _Target)) {
-            return Index;
-        }
+  for (Index, 0, _Blocks.count - 1) {
+    if (Private_SameItemBlock(_Blocks[Index], _Target)) {
+      return Index;
     }
-    return -1;
+  }
+  return -1;
 }
 
 ItemBlock[] Private_WithoutItemBlockAt(ItemBlock[] _Blocks, Integer _Index) {
-    declare ItemBlock[] Remaining;
-    for (I, 0, _Blocks.count - 1) {
-        if (I != _Index) {
-            Remaining.add(_Blocks[I]);
-        }
+  declare ItemBlock[] Remaining;
+  for (I, 0, _Blocks.count - 1) {
+    if (I != _Index) {
+      Remaining.add(_Blocks[I]);
     }
-    return Remaining;
+  }
+  return Remaining;
 }
 
 Integer DirectionToIndex(CMapEditorPlugin::CardinalDirections _Direction) {
-    if (_Direction == CMapEditorPlugin::CardinalDirections::East) {
-        return 1;
-    }
-    if (_Direction == CMapEditorPlugin::CardinalDirections::South) {
-        return 2;
-    }
-    if (_Direction == CMapEditorPlugin::CardinalDirections::West) {
-        return 3;
-    }
-    return 0;
+  if (_Direction == CMapEditorPlugin::CardinalDirections::East) {
+    return 1;
+  }
+  if (_Direction == CMapEditorPlugin::CardinalDirections::South) {
+    return 2;
+  }
+  if (_Direction == CMapEditorPlugin::CardinalDirections::West) {
+    return 3;
+  }
+  return 0;
 }
 
 CMapEditorPlugin::CardinalDirections DirectionFromIndex(Integer _Index) {
-    if (_Index == 1) {
-        return CMapEditorPlugin::CardinalDirections::East;
-    }
-    if (_Index == 2) {
-        return CMapEditorPlugin::CardinalDirections::South;
-    }
-    if (_Index == 3) {
-        return CMapEditorPlugin::CardinalDirections::West;
-    }
-    return CMapEditorPlugin::CardinalDirections::North;
+  if (_Index == 1) {
+    return CMapEditorPlugin::CardinalDirections::East;
+  }
+  if (_Index == 2) {
+    return CMapEditorPlugin::CardinalDirections::South;
+  }
+  if (_Index == 3) {
+    return CMapEditorPlugin::CardinalDirections::West;
+  }
+  return CMapEditorPlugin::CardinalDirections::North;
 }
 
 Void SetItemBlockList(ItemBlock[] _Blocks) {
-    declare ItemBlock[] Copy;
-    foreach (Block in _Blocks) {
-        Copy.add(Block);
-    }
-    declare metadata ItemBlock[] Atlas_ItemBlocks as Stored for Map;
-    Stored/* not Null here */.clear();
-    foreach (AddRangeItem in Copy) {
-        Stored.add(AddRangeItem);
-    }
+  declare ItemBlock[] Copy;
+  foreach (Block in _Blocks) {
+    Copy.add(Block);
+  }
+  declare metadata ItemBlock[] Atlas_ItemBlocks as Stored for Map;
+  Stored/* not Null here */.clear();
+  foreach (AddRangeItem in Copy) {
+    Stored.add(AddRangeItem);
+  }
 }
 
 ItemBlock[] GetItemBlockList() {
-    declare metadata ItemBlock[] Atlas_ItemBlocks as Stored for Map;
-    return Stored/* not Null here */;
+  declare metadata ItemBlock[] Atlas_ItemBlocks as Stored for Map;
+  return Stored/* not Null here */;
 }
 
 Int3[] GetRemovedWater() {
-    declare metadata Int3[] Atlas_RemovedWater as Stored for Map;
-    return Stored/* not Null here */;
+  declare metadata Int3[] Atlas_RemovedWater as Stored for Map;
+  return Stored/* not Null here */;
 }
 
 Void SetRemovedWater(Int3[] _Coords) {
-    declare Int3[] Copy;
-    foreach (Coord in _Coords) {
-        Copy.add(Coord);
-    }
-    declare metadata Int3[] Atlas_RemovedWater as Stored for Map;
-    Stored/* not Null here */.clear();
-    foreach (Coord in Copy) {
-        Stored.add(Coord);
-    }
+  declare Int3[] Copy;
+  foreach (Coord in _Coords) {
+    Copy.add(Coord);
+  }
+  declare metadata Int3[] Atlas_RemovedWater as Stored for Map;
+  Stored/* not Null here */.clear();
+  foreach (Coord in Copy) {
+    Stored.add(Coord);
+  }
 }
 
 Void SetItemBlockGroup(Text _Family, Text[][][] _Variants) {
-    G_ItemBlockGroups[_Family] = _Variants;
+  G_ItemBlockGroups[_Family] = _Variants;
 }
 
 Void SetLayeredItemBlockGroup(Text _Family, Text[][][] _Bottom, Text[][][] _Middle, Text[][][] _Top) {
-    SetItemBlockGroup(_Family ^ "#bottom", _Bottom);
-    SetItemBlockGroup(_Family ^ "#middle", _Middle);
-    SetItemBlockGroup(_Family ^ "#top", _Top);
+  SetItemBlockGroup(_Family ^ "#bottom", _Bottom);
+  SetItemBlockGroup(_Family ^ "#middle", _Middle);
+  SetItemBlockGroup(_Family ^ "#top", _Top);
 }
 
 Void SetCubePieceMapping(Text _Family, Integer[Integer] _Mapping) {
-    declare Integer[Integer] Copy;
-    foreach (EntryKey => EntryValue in _Mapping) {
-        Copy[EntryKey] = EntryValue;
-    }
-    G_CubePieceMapping[_Family] = Copy;
+  declare Integer[Integer] Copy;
+  foreach (EntryKey => EntryValue in _Mapping) {
+    Copy[EntryKey] = EntryValue;
+  }
+  G_CubePieceMapping[_Family] = Copy;
 }
 
 Void SetRemoveWaterBlockMapping(Text[Text] _Mapping) {
-    G_RemoveWaterMapping.clear();
-    foreach (PairKey => PairValue in _Mapping) {
-        G_RemoveWaterMapping[PairKey] = PairValue;
-    }
+  G_RemoveWaterMapping.clear();
+  foreach (PairKey => PairValue in _Mapping) {
+    G_RemoveWaterMapping[PairKey] = PairValue;
+  }
 }
 
 Void SetRestoreWaterBlockMapping(Text[] _VoidNames, Text _WaterVoid) {
-    G_RestoreWaterVoidNames.clear();
-    foreach (Name in _VoidNames) {
-        G_RestoreWaterVoidNames.add(Name);
-    }
-    G_WaterVoidName = _WaterVoid;
+  G_RestoreWaterVoidNames.clear();
+  foreach (Name in _VoidNames) {
+    G_RestoreWaterVoidNames.add(Name);
+  }
+  G_WaterVoidName = _WaterVoid;
 }
 
 Void SetFlatTerrainBlockName(Text _Name) {
-    G_FlatTerrainName = _Name;
+  G_FlatTerrainName = _Name;
 }
 
 Void SetTowerSelectionSize(Integer _Width, Integer _Depth) {
-    G_TowerWidth = MathLib::Max(1, _Width);
-    G_TowerDepth = MathLib::Max(1, _Depth);
+  declare NextWidth = MathLib::Max(1, _Width);
+  declare NextDepth = MathLib::Max(1, _Depth);
+  if (G_TowerWidth != NextWidth || G_TowerDepth != NextDepth) {
+    Private_ResetSelectionChangeTracking();
+  }
+  G_TowerWidth = NextWidth;
+  G_TowerDepth = NextDepth;
 }
 
 Integer GetRealGroundHeight(Integer _X, Integer _Z) {
-    return GetGroundHeight(_X, _Z);
+  return GetGroundHeight(_X, _Z);
 }
 
 Integer GetFakeGroundHeight(Integer _X, Integer _Z) {
-    declare Height = GetGroundHeight(_X, _Z);
-    foreach (Block in GetItemBlockList()) {
-        if (Block.Ground && _X >= Block.MacroblockCoord.X && _X < Block.MacroblockCoord.X + MathLib::Max(1, Block.Width) && _Z >= Block.MacroblockCoord.Z && _Z < Block.MacroblockCoord.Z + MathLib::Max(1, Block.Depth) && Block.MacroblockCoord.Y > Height) {
-            Height = Block.MacroblockCoord.Y;
-        }
+  declare Height = GetGroundHeight(_X, _Z);
+  foreach (Block in GetItemBlockList()) {
+    if (Block.Ground && _X >= Block.MacroblockCoord.X && _X < Block.MacroblockCoord.X + MathLib::Max(1, Block.Width) && _Z >= Block.MacroblockCoord.Z && _Z < Block.MacroblockCoord.Z + MathLib::Max(1, Block.Depth) && Block.MacroblockCoord.Y > Height) {
+      Height = Block.MacroblockCoord.Y;
     }
-    return Height;
+  }
+  return Height;
 }
 
 Void Private_DrawSelection() {
-    CustomSelectionCoords.clear();
-    if (!G_SelectionVisible) {
-        HideCustomSelection();
-        return;
-    }
-    foreach (Coord in G_CurrentSelection) {
-        CustomSelectionCoords.add(Coord);
-    }
-    ShowCustomSelection();
+  CustomSelectionCoords.clear();
+  if (!G_SelectionVisible) {
+    HideCustomSelection();
+    return;
+  }
+  foreach (Coord in G_CurrentSelection) {
+    CustomSelectionCoords.add(Coord);
+  }
+  ShowCustomSelection();
 }
 
 Void SetCurrentSelection(Int3[] _Coords, Boolean _Visible) {
-    declare Int3[] Copy;
-    foreach (Coord in _Coords) {
-        Copy.add(Coord);
-    }
-    G_CurrentSelection.clear();
-    foreach (Coord in Copy) {
-        G_CurrentSelection.add(Coord);
-    }
-    G_SelectionVisible = _Visible;
-    Private_DrawSelection();
+  declare Int3[] Copy;
+  foreach (Coord in _Coords) {
+    Copy.add(Coord);
+  }
+  G_CurrentSelection.clear();
+  foreach (Coord in Copy) {
+    G_CurrentSelection.add(Coord);
+  }
+  G_SelectionVisible = _Visible;
+  Private_DrawSelection();
 }
 
 Void ClearSelection() {
-    G_CurrentSelection.clear();
-    G_SelectionVisible = False;
-    CustomSelectionCoords.clear();
-    HideCustomSelection();
+  G_CurrentSelection.clear();
+  G_SelectionVisible = False;
+  CustomSelectionCoords.clear();
+  HideCustomSelection();
 }
 
 Void SetSelectionMode(Integer _NextMode) {
-    G_Mode = _NextMode;
-    G_Dragging = False;
-    if (_NextMode == C_Atlas_Libs_AtlasEngine_SelectionMode_RemoveWater || _NextMode == C_Atlas_Libs_AtlasEngine_SelectionMode_RestoreWater) {
-        SetCurrentSelection(GetRemovedWater(), True);
-        CustomSelectionRGB = <0.55, 0.30, 0.10>;
-    } else {
-        ClearSelection();
-    }
+  if (G_Mode != _NextMode) {
+    Private_ResetSelectionChangeTracking();
+  }
+  G_Mode = _NextMode;
+  G_Dragging = False;
+  if (_NextMode == C_SelectionMode_RemoveWater || _NextMode == C_SelectionMode_RestoreWater) {
+    SetCurrentSelection(GetRemovedWater(), True);
+    CustomSelectionRGB = <0.55, 0.30, 0.10>;
+  } else {
+    ClearSelection();
+  }
 }
 
 Void Initialize() {
-    G_PreviousItems.clear();
-    foreach (Item in Items) {
-        G_PreviousItems.add(Item.Position);
-    }
-    Private_DrawSelection();
+  G_PreviousItems.clear();
+  foreach (Item in Items) {
+    G_PreviousItems.add(Item.Position);
+  }
+  Private_DrawSelection();
 }
 
 ItemBlock[] Private_RemoveItemBlocksAtPosition(Vec3 _Position) {
-    declare metadata ItemBlock[] Atlas_ItemBlocks as StoredBlocks for Map;
-    declare ItemBlock[] Remaining;
-    declare ItemBlock[] Removed;
-    foreach (Block in StoredBlocks/* not Null here */) {
-        if (Private_SamePosition(Block.ItemPosition, _Position)) {
-            declare Model = GetMacroblockModelFromFilePath(Block.MacroblockName);
-            if (Model != Null && RemoveMacroblock(Model, Block.MacroblockCoord, DirectionFromIndex(Block.MacroblockDir))) {
-                Removed.add(Block);
-                continue;
-            }
-        }
-        Remaining.add(Block);
+  declare metadata ItemBlock[] Atlas_ItemBlocks as StoredBlocks for Map;
+  declare ItemBlock[] Remaining;
+  declare ItemBlock[] Removed;
+  foreach (Block in StoredBlocks/* not Null here */) {
+    if (Private_SamePosition(Block.ItemPosition, _Position)) {
+      declare Model = GetMacroblockModelFromFilePath(Block.MacroblockName);
+      if (Model != Null && RemoveMacroblock(Model, Block.MacroblockCoord, DirectionFromIndex(Block.MacroblockDir))) {
+        Removed.add(Block);
+        continue;
+      }
     }
-    if (Removed.count > 0) {
-        SetItemBlockList(Remaining);
-    }
-    return Removed;
+    Remaining.add(Block);
+  }
+  if (Removed.count > 0) {
+    SetItemBlockList(Remaining);
+  }
+  return Removed;
 }
 
 Void Private_SnapshotItems() {
-    G_PreviousItems.clear();
-    foreach (Item in Items) {
-        G_PreviousItems.add(Item.Position);
-    }
+  G_PreviousItems.clear();
+  foreach (Item in Items) {
+    G_PreviousItems.add(Item.Position);
+  }
 }
 
 Void SyncManuallyRemovedItems() {
-    if (Items.count > G_PreviousItems.count) {
-        for (I, G_PreviousItems.count, Items.count - 1) {
-            G_PreviousItems.add(Items[I].Position);
-        }
-        return;
+  if (Items.count > G_PreviousItems.count) {
+    for (I, G_PreviousItems.count, Items.count - 1) {
+      G_PreviousItems.add(Items[I].Position);
     }
-    if (Items.count == G_PreviousItems.count) {
-        return;
+    return;
+  }
+  if (Items.count == G_PreviousItems.count) {
+    return;
+  }
+  declare Integer[Vec3] Counts;
+  foreach (Item in Items) {
+    if (!Counts.existskey(Item.Position)) {
+      Counts[Item.Position] = 0;
     }
-    declare Integer[Vec3] Counts;
-    foreach (Item in Items) {
-        if (!Counts.existskey(Item.Position)) {
-            Counts[Item.Position] = 0;
-        }
-        Counts[Item.Position] += 1;
+    Counts[Item.Position] += 1;
+  }
+  declare Vec3[] RemovedPositions;
+  declare I = G_PreviousItems.count - 1;
+  while (I >= 0) {
+    declare Position = G_PreviousItems[I];
+    if (!Counts.existskey(Position) || Counts[Position] == 0) {
+      RemovedPositions.add(Position);
+      G_PreviousItems.removekey(I);
+    } else {
+      Counts[Position] -= 1;
     }
-    declare Vec3[] RemovedPositions;
-    declare I = G_PreviousItems.count - 1;
-    while (I >= 0) {
-        declare Position = G_PreviousItems[I];
-        if (!Counts.existskey(Position) || Counts[Position] == 0) {
-            RemovedPositions.add(Position);
-            G_PreviousItems.removekey(I);
-        } else {
-            Counts[Position] -= 1;
-        }
-        I -= 1;
-    }
-    foreach (Position in RemovedPositions) {
-        G_ItemRemovals.add(ItemRemoval { Position = Position, RemovedBlocks = Private_RemoveItemBlocksAtPosition(Position) });
-    }
-    Private_SnapshotItems();
+    I -= 1;
+  }
+  foreach (Position in RemovedPositions) {
+    G_ItemRemovals.add(ItemRemoval { Position = Position, RemovedBlocks = Private_RemoveItemBlocksAtPosition(Position) });
+  }
+  Private_SnapshotItems();
 }
 
 Int3[] BuildSelection(Int3 _Start, Int3 _End, Integer _SelectionMode) {
-    declare Int3[] Result;
-    declare MinX = MathLib::Min(_Start.X, _End.X);
-    declare MaxX = MathLib::Max(_Start.X, _End.X);
-    declare MinZ = MathLib::Min(_Start.Z, _End.Z);
-    declare MaxZ = MathLib::Max(_Start.Z, _End.Z);
-    if (_SelectionMode == C_Atlas_Libs_AtlasEngine_SelectionMode_Line1D) {
-        declare Dx = MathLib::Abs(_End.X - _Start.X);
-        declare Dy = MathLib::Abs(_End.Y - _Start.Y);
-        declare Dz = MathLib::Abs(_End.Z - _Start.Z);
-        declare Count = MathLib::Max(Dx, MathLib::Max(Dy, Dz));
-        for (I, 0, Count) {
-            if (Dx >= Dy && Dx >= Dz) {
-                declare Step = I;
-                if (_End.X < _Start.X) {
-                    Step = -I;
-                }
-                Result.add(<_Start.X + Step, _Start.Y, _Start.Z>);
-            } else if (Dy >= Dz) {
-                declare Step = I;
-                if (_End.Y < _Start.Y) {
-                    Step = -I;
-                }
-                Result.add(<_Start.X, _Start.Y + Step, _Start.Z>);
-            } else {
-                declare Step = I;
-                if (_End.Z < _Start.Z) {
-                    Step = -I;
-                }
-                Result.add(<_Start.X, _Start.Y, _Start.Z + Step>);
-            }
+  declare Int3[] Result;
+  declare MinX = MathLib::Min(_Start.X, _End.X);
+  declare MaxX = MathLib::Max(_Start.X, _End.X);
+  declare MinZ = MathLib::Min(_Start.Z, _End.Z);
+  declare MaxZ = MathLib::Max(_Start.Z, _End.Z);
+  if (_SelectionMode == C_SelectionMode_Line1D) {
+    declare Dx = MathLib::Abs(_End.X - _Start.X);
+    declare Dy = MathLib::Abs(_End.Y - _Start.Y);
+    declare Dz = MathLib::Abs(_End.Z - _Start.Z);
+    declare Count = MathLib::Max(Dx, MathLib::Max(Dy, Dz));
+    for (I, 0, Count) {
+      if (Dx >= Dy && Dx >= Dz) {
+        declare Step = I;
+        if (_End.X < _Start.X) {
+          Step = -I;
         }
-        return Result;
-    }
-    declare GroundForBox = 0;
-    if (_SelectionMode == C_Atlas_Libs_AtlasEngine_SelectionMode_BoxToGround) {
-        GroundForBox = GetFakeGroundHeight(MinX, MinZ);
-    }
-    for (X, MinX, MaxX) {
-        for (Z, MinZ, MaxZ) {
-            if (_SelectionMode == C_Atlas_Libs_AtlasEngine_SelectionMode_Ground2D || _SelectionMode == C_Atlas_Libs_AtlasEngine_SelectionMode_RemoveWater || _SelectionMode == C_Atlas_Libs_AtlasEngine_SelectionMode_RestoreWater) {
-                declare Y = GetRealGroundHeight(X, Z);
-                if (_SelectionMode == C_Atlas_Libs_AtlasEngine_SelectionMode_Ground2D) {
-                    Y = GetFakeGroundHeight(X, Z);
-                }
-                Result.add(<X, Y, Z>);
-            } else if (_SelectionMode == C_Atlas_Libs_AtlasEngine_SelectionMode_Plane2D) {
-                Result.add(<X, _Start.Y, Z>);
-            } else {
-                declare Top = _Start.Y;
-                declare Bottom = GetFakeGroundHeight(X, Z);
-                if (_SelectionMode == C_Atlas_Libs_AtlasEngine_SelectionMode_Box3D) {
-                    Top = MathLib::Max(_Start.Y, _End.Y);
-                    Bottom = MathLib::Min(_Start.Y, _End.Y);
-                } else if (_SelectionMode == C_Atlas_Libs_AtlasEngine_SelectionMode_BoxToGround) {
-                    if (GetFakeGroundHeight(X, Z) != GroundForBox) {
-                        return [];
-                    }
-                    Bottom = GroundForBox;
-                }
-                if (_SelectionMode == C_Atlas_Libs_AtlasEngine_SelectionMode_Tower) {
-                    Top = MathLib::Max(_Start.Y, _End.Y);
-                }
-                for (Y, Bottom, Top) {
-                    Result.add(<X, Y, Z>);
-                }
-            }
+        Result.add(<_Start.X + Step, _Start.Y, _Start.Z>);
+      } else if (Dy >= Dz) {
+        declare Step = I;
+        if (_End.Y < _Start.Y) {
+          Step = -I;
         }
+        Result.add(<_Start.X, _Start.Y + Step, _Start.Z>);
+      } else {
+        declare Step = I;
+        if (_End.Z < _Start.Z) {
+          Step = -I;
+        }
+        Result.add(<_Start.X, _Start.Y, _Start.Z + Step>);
+      }
     }
     return Result;
+  }
+  declare GroundForBox = 0;
+  if (_SelectionMode == C_SelectionMode_BoxToGround) {
+    GroundForBox = GetFakeGroundHeight(MinX, MinZ);
+  }
+  for (X, MinX, MaxX) {
+    for (Z, MinZ, MaxZ) {
+      if (_SelectionMode == C_SelectionMode_Ground2D || _SelectionMode == C_SelectionMode_RemoveWater || _SelectionMode == C_SelectionMode_RestoreWater) {
+        declare Y = GetRealGroundHeight(X, Z);
+        if (_SelectionMode == C_SelectionMode_Ground2D) {
+          Y = GetFakeGroundHeight(X, Z);
+        }
+        Result.add(<X, Y, Z>);
+      } else if (_SelectionMode == C_SelectionMode_Plane2D) {
+        Result.add(<X, _Start.Y, Z>);
+      } else {
+        declare Top = _Start.Y;
+        declare Bottom = GetFakeGroundHeight(X, Z);
+        if (_SelectionMode == C_SelectionMode_Box3D) {
+          Top = MathLib::Max(_Start.Y, _End.Y);
+          Bottom = MathLib::Min(_Start.Y, _End.Y);
+        } else if (_SelectionMode == C_SelectionMode_BoxToGround) {
+          if (GetFakeGroundHeight(X, Z) != GroundForBox) {
+            return [];
+          }
+          Bottom = GroundForBox;
+        }
+        if (_SelectionMode == C_SelectionMode_Tower) {
+          Top = MathLib::Max(_Start.Y, _End.Y);
+        }
+        for (Y, Bottom, Top) {
+          Result.add(<X, Y, Z>);
+        }
+      }
+    }
+  }
+  return Result;
 }
 
 Void Private_DrawPreview(Int3[] _Coords) {
-    CustomSelectionCoords.clear();
-    if (G_SelectionVisible) {
-        foreach (Coord in G_CurrentSelection) {
-            CustomSelectionCoords.add(Coord);
-        }
+  CustomSelectionCoords.clear();
+  if (G_SelectionVisible) {
+    foreach (Coord in G_CurrentSelection) {
+      CustomSelectionCoords.add(Coord);
     }
-    foreach (Coord in _Coords) {
-        if (!CustomSelectionCoords.exists(Coord)) {
-            CustomSelectionCoords.add(Coord);
-        }
+  }
+  foreach (Coord in _Coords) {
+    if (!CustomSelectionCoords.exists(Coord)) {
+      CustomSelectionCoords.add(Coord);
     }
-    ShowCustomSelection();
+  }
+  ShowCustomSelection();
 }
 
 Void Private_RollbackRemovedWater(Placement[] _Planned, Placement[] _Placed, Int3 _First, Int3 _Last) {
-    foreach (Entry in _Placed) {
-        if (!RemoveBlock(Entry.Coord)) {
-            G_LastRollbackFailed = True;
-        }
+  foreach (Entry in _Placed) {
+    if (!RemoveBlock(Entry.Coord)) {
+      G_LastRollbackFailed = True;
     }
-    if (!RemoveTerrainBlocks(_First, _Last)) {
+  }
+  if (!RemoveTerrainBlocks(_First, _Last)) {
+    G_LastRollbackFailed = True;
+  }
+  foreach (Entry in _Planned) {
+    declare Original = GetBlockModelFromName(Entry.Family);
+    if (Entry.Ground) {
+      Original = GetTerrainBlockModelFromName(Entry.Family);
+    }
+    if (Original == Null) {
+      G_LastRollbackFailed = True;
+      continue;
+    }
+    if (Entry.Ground) {
+      if (!PlaceTerrainBlocks(Original, Entry.Coord, Entry.Coord)) {
         G_LastRollbackFailed = True;
+      }
+    } else if (!PlaceBlock(Original, Entry.Coord, Entry.Direction)) {
+      G_LastRollbackFailed = True;
     }
-    foreach (Entry in _Planned) {
-        declare Original = GetBlockModelFromName(Entry.Family);
-        if (Entry.Ground) {
-            Original = GetTerrainBlockModelFromName(Entry.Family);
-        }
-        if (Original == Null) {
-            G_LastRollbackFailed = True;
-            continue;
-        }
-        if (Entry.Ground) {
-            if (!PlaceTerrainBlocks(Original, Entry.Coord, Entry.Coord)) {
-                G_LastRollbackFailed = True;
-            }
-        } else if (!PlaceBlock(Original, Entry.Coord, Entry.Direction)) {
-            G_LastRollbackFailed = True;
-        }
-    }
+  }
 }
 
 Boolean RemoveWater(Int3[] _Coords) {
-    G_LastRollbackFailed = False;
-    if (_Coords.count == 0 || TerrainBlockModels.count == 0) {
-        return False;
-    }
-    declare Terrain = TerrainBlockModels[0];
-    if (G_FlatTerrainName != "") {
-        Terrain = GetTerrainBlockModelFromName(G_FlatTerrainName);
-    }
-    if (Terrain == Null) {
-        return False;
-    }
-    declare Placement[] Planned;
-    foreach (Requested in _Coords) {
-        declare Coord = <Requested.X, GetRealGroundHeight(Requested.X, Requested.Z), Requested.Z>;
-        declare Duplicate = False;
-        foreach (Entry in Planned) {
-            if (Private_SameCoord(Entry.Coord, Coord)) {
-                Duplicate = True;
-            }
-        }
-        if (Duplicate) {
-            continue;
-        }
-        declare Old = GetBlock(Coord);
-        if (Old == Null || !G_RemoveWaterMapping.existskey(Old.BlockModel.Name)) {
-            return False;
-        }
-        declare VoidName = G_RemoveWaterMapping[Old.BlockModel.Name];
-        if (GetBlockModelFromName(VoidName) == Null) {
-            return False;
-        }
-        Planned.add(Placement { Coord = Coord, MacroblockName = VoidName, Family = Old.BlockModel.Name, Direction = Old.Dir, Ground = Old.BlockModel.IsTerrain });
-    }
-    declare First = Planned[0].Coord;
-    declare Last = First;
+  G_LastRollbackFailed = False;
+  if (_Coords.count == 0 || TerrainBlockModels.count == 0) {
+    return False;
+  }
+  declare Terrain = TerrainBlockModels[0];
+  if (G_FlatTerrainName != "") {
+    Terrain = GetTerrainBlockModelFromName(G_FlatTerrainName);
+  }
+  if (Terrain == Null) {
+    return False;
+  }
+  declare Placement[] Planned;
+  foreach (Requested in _Coords) {
+    declare Coord = <Requested.X, GetRealGroundHeight(Requested.X, Requested.Z), Requested.Z>;
+    declare Duplicate = False;
     foreach (Entry in Planned) {
-        First = <MathLib::Min(First.X, Entry.Coord.X), First.Y, MathLib::Min(First.Z, Entry.Coord.Z)>;
-        Last = <MathLib::Max(Last.X, Entry.Coord.X), Last.Y, MathLib::Max(Last.Z, Entry.Coord.Z)>;
+      if (Private_SameCoord(Entry.Coord, Coord)) {
+        Duplicate = True;
+      }
     }
-    if (!CanPlaceTerrainBlocks(Terrain, First, Last) || !PlaceTerrainBlocks(Terrain, First, Last)) {
-        return False;
+    if (Duplicate) {
+      continue;
     }
-    declare metadata Int3[] Atlas_RemovedWater as StoredWater for Map;
-    declare Placement[] Placed;
-    foreach (Entry in Planned) {
-        declare BlockModel = GetBlockModelFromName(Entry.MacroblockName);
-        if (!PlaceBlock(BlockModel, Entry.Coord, CMapEditorPlugin::CardinalDirections::North)) {
-            Private_RollbackRemovedWater(Planned, Placed, First, Last);
-            return False;
-        }
-        Placed.add(Entry);
+    declare Old = GetBlock(Coord);
+    if (Old == Null || !G_RemoveWaterMapping.existskey(Old.BlockModel.Name)) {
+      return False;
     }
-    foreach (Entry in Planned) {
-        if (!StoredWater/* not Null here */.exists(Entry.Coord)) {
-            StoredWater.add(Entry.Coord);
-        }
+    declare VoidName = G_RemoveWaterMapping[Old.BlockModel.Name];
+    if (GetBlockModelFromName(VoidName) == Null) {
+      return False;
     }
-    SetCurrentSelection(StoredWater/* not Null here */, True);
-    CustomSelectionRGB = <0.55, 0.30, 0.10>;
-    return True;
+    Planned.add(Placement { Coord = Coord, MacroblockName = VoidName, Family = Old.BlockModel.Name, Direction = Old.Dir, Ground = Old.BlockModel.IsTerrain });
+  }
+  declare First = Planned[0].Coord;
+  declare Last = First;
+  foreach (Entry in Planned) {
+    First = <MathLib::Min(First.X, Entry.Coord.X), First.Y, MathLib::Min(First.Z, Entry.Coord.Z)>;
+    Last = <MathLib::Max(Last.X, Entry.Coord.X), Last.Y, MathLib::Max(Last.Z, Entry.Coord.Z)>;
+  }
+  if (!CanPlaceTerrainBlocks(Terrain, First, Last) || !PlaceTerrainBlocks(Terrain, First, Last)) {
+    return False;
+  }
+  declare metadata Int3[] Atlas_RemovedWater as StoredWater for Map;
+  declare Placement[] Placed;
+  foreach (Entry in Planned) {
+    declare BlockModel = GetBlockModelFromName(Entry.MacroblockName);
+    if (!PlaceBlock(BlockModel, Entry.Coord, CMapEditorPlugin::CardinalDirections::North)) {
+      Private_RollbackRemovedWater(Planned, Placed, First, Last);
+      return False;
+    }
+    Placed.add(Entry);
+  }
+  foreach (Entry in Planned) {
+    if (!StoredWater/* not Null here */.exists(Entry.Coord)) {
+      StoredWater.add(Entry.Coord);
+    }
+  }
+  SetCurrentSelection(StoredWater/* not Null here */, True);
+  CustomSelectionRGB = <0.55, 0.30, 0.10>;
+  return True;
 }
 
 Void Private_RollbackRestoredWater(Placement[] _Restored) {
-    declare CBlockModel Terrain = Null;
-    if (TerrainBlockModels.count > 0) {
-        Terrain = TerrainBlockModels[0];
+  declare CBlockModel Terrain = Null;
+  if (TerrainBlockModels.count > 0) {
+    Terrain = TerrainBlockModels[0];
+  }
+  if (G_FlatTerrainName != "") {
+    Terrain = GetTerrainBlockModelFromName(G_FlatTerrainName);
+  }
+  foreach (Entry in _Restored) {
+    if (!RemoveBlock(Entry.Coord)) {
+      G_LastRollbackFailed = True;
     }
-    if (G_FlatTerrainName != "") {
-        Terrain = GetTerrainBlockModelFromName(G_FlatTerrainName);
+    if (Terrain != Null) {
+      if (!PlaceTerrainBlocks(Terrain, Entry.Coord, Entry.Coord)) {
+        G_LastRollbackFailed = True;
+      }
+    } else {
+      G_LastRollbackFailed = True;
     }
-    foreach (Entry in _Restored) {
-        if (!RemoveBlock(Entry.Coord)) {
-            G_LastRollbackFailed = True;
-        }
-        if (Terrain != Null) {
-            if (!PlaceTerrainBlocks(Terrain, Entry.Coord, Entry.Coord)) {
-                G_LastRollbackFailed = True;
-            }
-        } else {
-            G_LastRollbackFailed = True;
-        }
-        declare OldVoid = GetBlockModelFromName(Entry.MacroblockName);
-        if (OldVoid != Null) {
-            if (!PlaceBlock(OldVoid, Entry.Coord, Entry.Direction)) {
-                G_LastRollbackFailed = True;
-            }
-        } else {
-            G_LastRollbackFailed = True;
-        }
+    declare OldVoid = GetBlockModelFromName(Entry.MacroblockName);
+    if (OldVoid != Null) {
+      if (!PlaceBlock(OldVoid, Entry.Coord, Entry.Direction)) {
+        G_LastRollbackFailed = True;
+      }
+    } else {
+      G_LastRollbackFailed = True;
     }
+  }
 }
 
 Boolean RestoreWater(Int3[] _Coords) {
-    G_LastRollbackFailed = False;
-    declare Water = GetBlockModelFromName(G_WaterVoidName);
-    if (Water == Null) {
-        return False;
+  G_LastRollbackFailed = False;
+  declare Water = GetBlockModelFromName(G_WaterVoidName);
+  if (Water == Null) {
+    return False;
+  }
+  declare metadata Int3[] Atlas_RemovedWater as StoredWater for Map;
+  declare Int3[] Targets;
+  declare Placement[] Originals;
+  foreach (Requested in _Coords) {
+    foreach (Coord in StoredWater/* not Null here */) {
+      if (Coord.X != Requested.X || Coord.Z != Requested.Z || Targets.exists(Coord)) {
+        continue;
+      }
+      declare Block = GetBlock(Coord);
+      if (Block != Null && G_RestoreWaterVoidNames.exists(Block.BlockModel.Name)) {
+        Targets.add(Coord);
+        Originals.add(Placement { Coord = Coord, MacroblockName = Block.BlockModel.Name, Direction = Block.Dir });
+      }
     }
-    declare metadata Int3[] Atlas_RemovedWater as StoredWater for Map;
-    declare Int3[] Targets;
-    declare Placement[] Originals;
-    foreach (Requested in _Coords) {
-        foreach (Coord in StoredWater/* not Null here */) {
-            if (Coord.X != Requested.X || Coord.Z != Requested.Z || Targets.exists(Coord)) {
-                continue;
-            }
-            declare Block = GetBlock(Coord);
-            if (Block != Null && G_RestoreWaterVoidNames.exists(Block.BlockModel.Name)) {
-                Targets.add(Coord);
-                Originals.add(Placement { Coord = Coord, MacroblockName = Block.BlockModel.Name, Direction = Block.Dir });
-            }
-        }
+  }
+  declare Placement[] Restored;
+  for (I, 0, Targets.count - 1) {
+    declare Coord = Targets[I];
+    if (!RemoveBlock(Coord)) {
+      Private_RollbackRestoredWater(Restored);
+      return False;
     }
-    declare Placement[] Restored;
-    for (I, 0, Targets.count - 1) {
-        declare Coord = Targets[I];
-        if (!RemoveBlock(Coord)) {
-            Private_RollbackRestoredWater(Restored);
-            return False;
-        }
-        Restored.add(Originals[I]);
-        if (!RemoveTerrainBlocks(Coord, Coord) || !PlaceBlock(Water, Coord, CMapEditorPlugin::CardinalDirections::North)) {
-            Private_RollbackRestoredWater(Restored);
-            return False;
-        }
+    Restored.add(Originals[I]);
+    if (!RemoveTerrainBlocks(Coord, Coord) || !PlaceBlock(Water, Coord, CMapEditorPlugin::CardinalDirections::North)) {
+      Private_RollbackRestoredWater(Restored);
+      return False;
     }
-    foreach (Coord in Targets) {
-        StoredWater/* not Null here */.remove(Coord);
-    }
-    SetCurrentSelection(StoredWater/* not Null here */, True);
-    CustomSelectionRGB = <0.55, 0.30, 0.10>;
-    return True;
+  }
+  foreach (Coord in Targets) {
+    StoredWater/* not Null here */.remove(Coord);
+  }
+  SetCurrentSelection(StoredWater/* not Null here */, True);
+  CustomSelectionRGB = <0.55, 0.30, 0.10>;
+  return True;
 }
 
 Void Update() {
-    SyncManuallyRemovedItems();
-    declare Pressed = Input.MouseLeftButton;
-    if (G_Mode == C_Atlas_Libs_AtlasEngine_SelectionMode_None) {
-        G_PreviousMouseDown = Pressed;
-        return;
-    }
-    declare CursorCoord = Cursor.Coord;
-    if (G_Mode == C_Atlas_Libs_AtlasEngine_SelectionMode_Ground2D || G_Mode == C_Atlas_Libs_AtlasEngine_SelectionMode_RemoveWater || G_Mode == C_Atlas_Libs_AtlasEngine_SelectionMode_RestoreWater) {
-        CursorCoord = GetMouseCoordOnGround();
-    }
-    if (G_Mode == C_Atlas_Libs_AtlasEngine_SelectionMode_Tower) {
-        declare TowerEnd = <CursorCoord.X + MathLib::Max(1, G_TowerWidth) - 1, CursorCoord.Y, CursorCoord.Z + MathLib::Max(1, G_TowerDepth) - 1>;
-        declare TowerCoords = BuildSelection(CursorCoord, TowerEnd, C_Atlas_Libs_AtlasEngine_SelectionMode_Tower);
-        Private_DrawPreview(TowerCoords);
-        G_SelectionChanged.add(SelectionChange { Start = CursorCoord, End = TowerEnd, Coords = TowerCoords });
-        if (Pressed && !G_PreviousMouseDown) {
-            G_SelectionConfirmed.add(SelectionChange { Start = CursorCoord, End = TowerEnd, Coords = TowerCoords });
-            SetCurrentSelection(TowerCoords, True);
-        }
-        G_PreviousMouseDown = Pressed;
-        return;
+  SyncManuallyRemovedItems();
+  declare Pressed = Input.MouseLeftButton;
+  if (G_Mode == C_SelectionMode_None) {
+    G_PreviousMouseDown = Pressed;
+    return;
+  }
+  declare CursorCoord = Cursor.Coord;
+  if (G_Mode == C_SelectionMode_Ground2D || G_Mode == C_SelectionMode_RemoveWater || G_Mode == C_SelectionMode_RestoreWater) {
+    CursorCoord = GetMouseCoordOnGround();
+  }
+  if (G_Mode == C_SelectionMode_Tower) {
+    declare TowerEnd = <CursorCoord.X + MathLib::Max(1, G_TowerWidth) - 1, CursorCoord.Y, CursorCoord.Z + MathLib::Max(1, G_TowerDepth) - 1>;
+    declare TowerCoords = BuildSelection(CursorCoord, TowerEnd, C_SelectionMode_Tower);
+    Private_DrawPreview(TowerCoords);
+    if (Private_SelectionChangedSinceLastEvent(TowerCoords)) {
+      G_SelectionChanged.add(SelectionChange { Start = CursorCoord, End = TowerEnd, Coords = TowerCoords });
     }
     if (Pressed && !G_PreviousMouseDown) {
-        G_DragStart = CursorCoord;
-        G_Dragging = True;
-    }
-    if (G_Dragging) {
-        declare Coords = BuildSelection(G_DragStart, CursorCoord, G_Mode);
-        declare Change = SelectionChange { Start = G_DragStart, End = CursorCoord, Coords = Coords };
-        if (Pressed) {
-            G_SelectionChanged.add(Change);
-            Private_DrawPreview(Coords);
-        } else {
-            G_SelectionConfirmed.add(Change);
-            if (G_Mode == C_Atlas_Libs_AtlasEngine_SelectionMode_RemoveWater) {
-                RemoveWater(Coords);
-            } else if (G_Mode == C_Atlas_Libs_AtlasEngine_SelectionMode_RestoreWater) {
-                RestoreWater(Coords);
-            } else {
-                SetCurrentSelection(Coords, True);
-            }
-            G_Dragging = False;
-        }
-    } else if (G_SelectionVisible) {
-        Private_DrawSelection();
+      G_SelectionConfirmed.add(SelectionChange { Start = CursorCoord, End = TowerEnd, Coords = TowerCoords });
+      SetCurrentSelection(TowerCoords, True);
     }
     G_PreviousMouseDown = Pressed;
+    return;
+  }
+  if (Pressed && !G_PreviousMouseDown) {
+    G_DragStart = CursorCoord;
+    G_Dragging = True;
+    Private_ResetSelectionChangeTracking();
+  }
+  if (G_Dragging) {
+    declare Coords = BuildSelection(G_DragStart, CursorCoord, G_Mode);
+    declare Change = SelectionChange { Start = G_DragStart, End = CursorCoord, Coords = Coords };
+    if (Pressed) {
+      if (Private_SelectionChangedSinceLastEvent(Coords)) {
+        G_SelectionChanged.add(Change);
+      }
+      Private_DrawPreview(Coords);
+    } else {
+      G_SelectionConfirmed.add(Change);
+      if (G_Mode == C_SelectionMode_RemoveWater) {
+        RemoveWater(Coords);
+      } else if (G_Mode == C_SelectionMode_RestoreWater) {
+        RestoreWater(Coords);
+      } else {
+        SetCurrentSelection(Coords, True);
+      }
+      G_Dragging = False;
+    }
+  } else if (G_SelectionVisible) {
+    Private_DrawSelection();
+  }
+  G_PreviousMouseDown = Pressed;
 }
 
 Boolean PlaceItemBlockWithFootprint(Text _MacroblockName, Int3 _Coord, CMapEditorPlugin::CardinalDirections _Direction, Boolean _Ground, Text _Family, Integer _PieceIndex, Integer _Width, Integer _Depth) {
-    if (_Width < 1 || _Depth < 1) {
-        return False;
-    }
-    declare Model = GetMacroblockModelFromFilePath(_MacroblockName);
-    if (Model == Null || !CanPlaceMacroblock_NoDestruction(Model, _Coord, _Direction)) {
-        return False;
-    }
-    declare PreviousCount = Items.count;
-    if (!PlaceMacroblock_NoDestruction(Model, _Coord, _Direction)) {
-        return False;
-    }
-    declare Vec3 Position;
-    if (Items.count > PreviousCount) {
-        Position = Items[PreviousCount].Position;
-    } else {
-        Position = GetVec3FromCoord(_Coord);
-    }
-    declare metadata ItemBlock[] Atlas_ItemBlocks as StoredBlocks for Map;
-    StoredBlocks/* not Null here */.add(ItemBlock { MacroblockName = _MacroblockName, MacroblockCoord = _Coord, MacroblockDir = DirectionToIndex(_Direction), ItemPosition = Position, Ground = _Ground, Family = _Family, PieceIndex = _PieceIndex, Width = _Width, Depth = _Depth });
-    Private_SnapshotItems();
-    return True;
+  if (_Width < 1 || _Depth < 1) {
+    return False;
+  }
+  declare Model = GetMacroblockModelFromFilePath(_MacroblockName);
+  if (Model == Null || !CanPlaceMacroblock_NoDestruction(Model, _Coord, _Direction)) {
+    return False;
+  }
+  declare PreviousCount = Items.count;
+  if (!PlaceMacroblock_NoDestruction(Model, _Coord, _Direction)) {
+    return False;
+  }
+  declare Vec3 Position;
+  if (Items.count > PreviousCount) {
+    Position = Items[PreviousCount].Position;
+  } else {
+    Position = GetVec3FromCoord(_Coord);
+  }
+  declare metadata ItemBlock[] Atlas_ItemBlocks as StoredBlocks for Map;
+  StoredBlocks/* not Null here */.add(ItemBlock { MacroblockName = _MacroblockName, MacroblockCoord = _Coord, MacroblockDir = DirectionToIndex(_Direction), ItemPosition = Position, Ground = _Ground, Family = _Family, PieceIndex = _PieceIndex, Width = _Width, Depth = _Depth });
+  Private_SnapshotItems();
+  return True;
 }
 
 Boolean PlaceItemBlock(Text _MacroblockName, Int3 _Coord, CMapEditorPlugin::CardinalDirections _Direction, Boolean _Ground, Text _Family, Integer _PieceIndex) {
-    return PlaceItemBlockWithFootprint(_MacroblockName, _Coord, _Direction, _Ground, _Family, _PieceIndex, 1, 1);
+  return PlaceItemBlockWithFootprint(_MacroblockName, _Coord, _Direction, _Ground, _Family, _PieceIndex, 1, 1);
 }
 
 Boolean Private_InsideItemBlock(Int3 _Coord, ItemBlock _Block) {
-    return _Coord.Y == _Block.MacroblockCoord.Y && _Coord.X >= _Block.MacroblockCoord.X && _Coord.X < _Block.MacroblockCoord.X + MathLib::Max(1, _Block.Width) && _Coord.Z >= _Block.MacroblockCoord.Z && _Coord.Z < _Block.MacroblockCoord.Z + MathLib::Max(1, _Block.Depth);
+  return _Coord.Y == _Block.MacroblockCoord.Y && _Coord.X >= _Block.MacroblockCoord.X && _Coord.X < _Block.MacroblockCoord.X + MathLib::Max(1, _Block.Width) && _Coord.Z >= _Block.MacroblockCoord.Z && _Coord.Z < _Block.MacroblockCoord.Z + MathLib::Max(1, _Block.Depth);
 }
 
 Integer RemoveItemBlocks(Int3 _Coord, Text _MacroblockName, Integer _Direction) {
-    declare metadata ItemBlock[] Atlas_ItemBlocks as StoredBlocks for Map;
-    declare ItemBlock[] Remaining;
-    declare Count = 0;
-    foreach (Block in StoredBlocks/* not Null here */) {
-        if (Private_InsideItemBlock(_Coord, Block) && (_MacroblockName == "" || Block.MacroblockName == _MacroblockName) && (_Direction < 0 || Block.MacroblockDir == _Direction)) {
-            declare Model = GetMacroblockModelFromFilePath(Block.MacroblockName);
-            if (Model != Null && RemoveMacroblock(Model, Block.MacroblockCoord, DirectionFromIndex(Block.MacroblockDir))) {
-                Count += 1;
-                continue;
-            }
-        }
-        Remaining.add(Block);
+  declare metadata ItemBlock[] Atlas_ItemBlocks as StoredBlocks for Map;
+  declare ItemBlock[] Remaining;
+  declare Count = 0;
+  foreach (Block in StoredBlocks/* not Null here */) {
+    if (Private_InsideItemBlock(_Coord, Block) && (_MacroblockName == "" || Block.MacroblockName == _MacroblockName) && (_Direction < 0 || Block.MacroblockDir == _Direction)) {
+      declare Model = GetMacroblockModelFromFilePath(Block.MacroblockName);
+      if (Model != Null && RemoveMacroblock(Model, Block.MacroblockCoord, DirectionFromIndex(Block.MacroblockDir))) {
+        Count += 1;
+        continue;
+      }
     }
-    if (Count > 0) {
-        SetItemBlockList(Remaining);
-    }
-    Private_SnapshotItems();
-    return Count;
+    Remaining.add(Block);
+  }
+  if (Count > 0) {
+    SetItemBlockList(Remaining);
+  }
+  Private_SnapshotItems();
+  return Count;
 }
 
 Integer RemoveItemBlocksAtCoord(Int3 _Coord) {
-    return RemoveItemBlocks(_Coord, "", -1);
+  return RemoveItemBlocks(_Coord, "", -1);
 }
 
 Integer RemoveItemBlocksByName(Int3 _Coord, Text _MacroblockName) {
-    return RemoveItemBlocks(_Coord, _MacroblockName, -1);
+  return RemoveItemBlocks(_Coord, _MacroblockName, -1);
 }
 
 Boolean Private_HasSide(Integer _Mask, Integer _Side) {
-    return _Mask % (_Side * 2) >= _Side;
+  return _Mask % (_Side * 2) >= _Side;
 }
 
 Integer Private_AddSide(Integer __Input_Mask, Integer _Side) {
-    declare Integer _Mask = __Input_Mask;
-    if (!Private_HasSide(_Mask, _Side)) {
-        _Mask += _Side;
-    }
-    return _Mask;
+  declare Integer _Mask = __Input_Mask;
+  if (!Private_HasSide(_Mask, _Side)) {
+    _Mask += _Side;
+  }
+  return _Mask;
 }
 
 Integer Private_RotateMask(Integer __Input_Mask, Integer _Turns) {
-    declare Integer _Mask = __Input_Mask;
-    for (Turn, 0, _Turns - 1) {
-        declare Rotated = 0;
-        if (Private_HasSide(_Mask, 1)) {
-            Rotated += 2;
-        }
-        if (Private_HasSide(_Mask, 2)) {
-            Rotated += 4;
-        }
-        if (Private_HasSide(_Mask, 4)) {
-            Rotated += 8;
-        }
-        if (Private_HasSide(_Mask, 8)) {
-            Rotated += 1;
-        }
-        _Mask = Rotated;
+  declare Integer _Mask = __Input_Mask;
+  for (Turn, 0, _Turns - 1) {
+    declare Rotated = 0;
+    if (Private_HasSide(_Mask, 1)) {
+      Rotated += 2;
     }
-    return _Mask;
+    if (Private_HasSide(_Mask, 2)) {
+      Rotated += 4;
+    }
+    if (Private_HasSide(_Mask, 4)) {
+      Rotated += 8;
+    }
+    if (Private_HasSide(_Mask, 8)) {
+      Rotated += 1;
+    }
+    _Mask = Rotated;
+  }
+  return _Mask;
 }
 
 Integer RoadPieceForMask(Integer _Mask) {
-    if (_Mask == 0) {
-        return 0;
-    }
-    if (_Mask == 15) {
-        return 5;
-    }
-    declare Count = 0;
-    if (Private_HasSide(_Mask, 1)) {
-        Count += 1;
-    }
-    if (Private_HasSide(_Mask, 2)) {
-        Count += 1;
-    }
-    if (Private_HasSide(_Mask, 4)) {
-        Count += 1;
-    }
-    if (Private_HasSide(_Mask, 8)) {
-        Count += 1;
-    }
-    if (Count == 1) {
-        return 1;
-    }
-    if (Count == 3) {
-        return 4;
-    }
-    if (_Mask == 5 || _Mask == 10) {
-        return 3;
-    }
-    return 2;
+  if (_Mask == 0) {
+    return 0;
+  }
+  if (_Mask == 15) {
+    return 5;
+  }
+  declare Count = 0;
+  if (Private_HasSide(_Mask, 1)) {
+    Count += 1;
+  }
+  if (Private_HasSide(_Mask, 2)) {
+    Count += 1;
+  }
+  if (Private_HasSide(_Mask, 4)) {
+    Count += 1;
+  }
+  if (Private_HasSide(_Mask, 8)) {
+    Count += 1;
+  }
+  if (Count == 1) {
+    return 1;
+  }
+  if (Count == 3) {
+    return 4;
+  }
+  if (_Mask == 5 || _Mask == 10) {
+    return 3;
+  }
+  return 2;
 }
 
 CMapEditorPlugin::CardinalDirections RoadDirectionForMask(Integer _Mask) {
-    declare Piece = RoadPieceForMask(_Mask);
-    declare BaseMask = 0;
-    if (Piece == 1) {
-        BaseMask = 1;
+  declare Piece = RoadPieceForMask(_Mask);
+  declare BaseMask = 0;
+  if (Piece == 1) {
+    BaseMask = 1;
+  }
+  if (Piece == 2) {
+    BaseMask = 3;
+  }
+  if (Piece == 3) {
+    BaseMask = 5;
+  }
+  if (Piece == 4) {
+    BaseMask = 11;
+  }
+  if (Piece == 5) {
+    BaseMask = 15;
+  }
+  for (Turn, 0, 4 - 1) {
+    if (Private_RotateMask(BaseMask, Turn) == _Mask) {
+      return DirectionFromIndex(Turn);
     }
-    if (Piece == 2) {
-        BaseMask = 3;
-    }
-    if (Piece == 3) {
-        BaseMask = 5;
-    }
-    if (Piece == 4) {
-        BaseMask = 11;
-    }
-    if (Piece == 5) {
-        BaseMask = 15;
-    }
-    for (Turn, 0, 4 - 1) {
-        if (Private_RotateMask(BaseMask, Turn) == _Mask) {
-            return DirectionFromIndex(Turn);
-        }
-    }
-    return CMapEditorPlugin::CardinalDirections::North;
+  }
+  return CMapEditorPlugin::CardinalDirections::North;
 }
 
 Integer Private_MaskForRoadPiece(Integer _Piece, CMapEditorPlugin::CardinalDirections _Direction) {
-    declare Mask = 0;
-    if (_Piece == 1) {
-        Mask = 1;
-    }
-    if (_Piece == 2) {
-        Mask = 3;
-    }
-    if (_Piece == 3) {
-        Mask = 5;
-    }
-    if (_Piece == 4) {
-        Mask = 11;
-    }
-    if (_Piece == 5) {
-        Mask = 15;
-    }
-    return Private_RotateMask(Mask, DirectionToIndex(_Direction));
+  declare Mask = 0;
+  if (_Piece == 1) {
+    Mask = 1;
+  }
+  if (_Piece == 2) {
+    Mask = 3;
+  }
+  if (_Piece == 3) {
+    Mask = 5;
+  }
+  if (_Piece == 4) {
+    Mask = 11;
+  }
+  if (_Piece == 5) {
+    Mask = 15;
+  }
+  return Private_RotateMask(Mask, DirectionToIndex(_Direction));
 }
 
 Text Private_VariantFor(Text _Family, Integer _Piece, Boolean _Ground, Int3 _Coord) {
-    if (!G_ItemBlockGroups.existskey(_Family)) {
-        return "";
-    }
-    declare Layers = G_ItemBlockGroups[_Family];
-    declare Layer = 0;
-    if (_Ground) {
-        Layer = 1;
-    }
-    if (Layer >= Layers.count || _Piece < 0 || _Piece >= Layers[Layer].count) {
-        return "";
-    }
-    declare Variants = Layers[Layer][_Piece];
-    if (Variants.count == 0) {
-        return "";
-    }
-    declare Seed = (_Coord.X * 31 + _Coord.Y * 17 + _Coord.Z * 13) % Variants.count;
-    if (Seed < 0) {
-        Seed += Variants.count;
-    }
-    return Variants[Seed];
+  if (!G_ItemBlockGroups.existskey(_Family)) {
+    return "";
+  }
+  declare Layers = G_ItemBlockGroups[_Family];
+  declare Layer = 0;
+  if (_Ground) {
+    Layer = 1;
+  }
+  if (Layer >= Layers.count || _Piece < 0 || _Piece >= Layers[Layer].count) {
+    return "";
+  }
+  declare Variants = Layers[Layer][_Piece];
+  if (Variants.count == 0) {
+    return "";
+  }
+  declare Seed = (_Coord.X * 31 + _Coord.Y * 17 + _Coord.Z * 13) % Variants.count;
+  if (Seed < 0) {
+    Seed += Variants.count;
+  }
+  return Variants[Seed];
 }
 
 Boolean Private_WithinMap(Int3 _Coord) {
-    return _Coord.X >= 0 && _Coord.Z >= 0 && _Coord.Y >= 0 && _Coord.X < Map.Size.X && _Coord.Z < Map.Size.Z && _Coord.Y < Map.Size.Y;
+  return _Coord.X >= 0 && _Coord.Z >= 0 && _Coord.Y >= 0 && _Coord.X < Map.Size.X && _Coord.Z < Map.Size.Z && _Coord.Y < Map.Size.Y;
 }
 
 Boolean Private_FootprintsOverlap(Placement _A, Placement _B) {
-    return _A.Coord.Y == _B.Coord.Y && _A.Coord.X < _B.Coord.X + MathLib::Max(1, _B.Width) && _B.Coord.X < _A.Coord.X + MathLib::Max(1, _A.Width) && _A.Coord.Z < _B.Coord.Z + MathLib::Max(1, _B.Depth) && _B.Coord.Z < _A.Coord.Z + MathLib::Max(1, _A.Depth);
+  return _A.Coord.Y == _B.Coord.Y && _A.Coord.X < _B.Coord.X + MathLib::Max(1, _B.Width) && _B.Coord.X < _A.Coord.X + MathLib::Max(1, _A.Width) && _A.Coord.Z < _B.Coord.Z + MathLib::Max(1, _B.Depth) && _B.Coord.Z < _A.Coord.Z + MathLib::Max(1, _A.Depth);
 }
 
 Boolean Private_ItemBlockFootprintsOverlap(ItemBlock _Block, Placement _Placement) {
-    return _Block.MacroblockCoord.Y == _Placement.Coord.Y && _Block.MacroblockCoord.X < _Placement.Coord.X + MathLib::Max(1, _Placement.Width) && _Placement.Coord.X < _Block.MacroblockCoord.X + MathLib::Max(1, _Block.Width) && _Block.MacroblockCoord.Z < _Placement.Coord.Z + MathLib::Max(1, _Placement.Depth) && _Placement.Coord.Z < _Block.MacroblockCoord.Z + MathLib::Max(1, _Block.Depth);
+  return _Block.MacroblockCoord.Y == _Placement.Coord.Y && _Block.MacroblockCoord.X < _Placement.Coord.X + MathLib::Max(1, _Placement.Width) && _Placement.Coord.X < _Block.MacroblockCoord.X + MathLib::Max(1, _Block.Width) && _Block.MacroblockCoord.Z < _Placement.Coord.Z + MathLib::Max(1, _Placement.Depth) && _Placement.Coord.Z < _Block.MacroblockCoord.Z + MathLib::Max(1, _Block.Depth);
 }
 
 Void Private_RestoreRemoved(ItemBlock[] _Removed) {
-    declare metadata ItemBlock[] Atlas_ItemBlocks as StoredBlocks for Map;
-    foreach (Block in _Removed) {
-        declare Model = GetMacroblockModelFromFilePath(Block.MacroblockName);
-        if (Model != Null && PlaceMacroblock_NoDestruction(Model, Block.MacroblockCoord, DirectionFromIndex(Block.MacroblockDir))) {
-            StoredBlocks/* not Null here */.add(Block);
-        } else {
-            G_LastRollbackFailed = True;
-        }
+  declare metadata ItemBlock[] Atlas_ItemBlocks as StoredBlocks for Map;
+  foreach (Block in _Removed) {
+    declare Model = GetMacroblockModelFromFilePath(Block.MacroblockName);
+    if (Model != Null && PlaceMacroblock_NoDestruction(Model, Block.MacroblockCoord, DirectionFromIndex(Block.MacroblockDir))) {
+      StoredBlocks/* not Null here */.add(Block);
+    } else {
+      G_LastRollbackFailed = True;
     }
-    Private_SnapshotItems();
+  }
+  Private_SnapshotItems();
 }
 
 Boolean ExecutePlacementPlan(Placement[] _Plan) {
-    G_LastRollbackFailed = False;
-    if (_Plan.count == 0) {
+  G_LastRollbackFailed = False;
+  if (_Plan.count == 0) {
+    return False;
+  }
+  declare ItemBlock[] Previous;
+  declare Placement[] Additions;
+  declare metadata ItemBlock[] Atlas_ItemBlocks as StoredBlocks for Map;
+  foreach (Entry in _Plan) {
+    if (!Private_WithinMap(Entry.Coord) || GetMacroblockModelFromFilePath(Entry.MacroblockName) == Null) {
+      return False;
+    }
+    foreach (Other in Additions) {
+      if (Private_FootprintsOverlap(Entry, Other)) {
         return False;
+      }
     }
-    declare ItemBlock[] Previous;
-    declare Placement[] Additions;
-    declare metadata ItemBlock[] Atlas_ItemBlocks as StoredBlocks for Map;
-    foreach (Entry in _Plan) {
-        if (!Private_WithinMap(Entry.Coord) || GetMacroblockModelFromFilePath(Entry.MacroblockName) == Null) {
-            return False;
+    Additions.add(Entry);
+    declare Width = MathLib::Max(1, Entry.Width);
+    declare Depth = MathLib::Max(1, Entry.Depth);
+    for (X, Entry.Coord.X, Entry.Coord.X + Width - 1) {
+      for (Z, Entry.Coord.Z, Entry.Coord.Z + Depth - 1) {
+        if (!Private_WithinMap(<X, Entry.Coord.Y, Z>)) {
+          return False;
         }
-        foreach (Other in Additions) {
-            if (Private_FootprintsOverlap(Entry, Other)) {
-                return False;
-            }
-        }
-        Additions.add(Entry);
-        declare Width = MathLib::Max(1, Entry.Width);
-        declare Depth = MathLib::Max(1, Entry.Depth);
-        for (X, Entry.Coord.X, Entry.Coord.X + Width - 1) {
-            for (Z, Entry.Coord.Z, Entry.Coord.Z + Depth - 1) {
-                if (!Private_WithinMap(<X, Entry.Coord.Y, Z>)) {
-                    return False;
-                }
-            }
-        }
-        foreach (Block in StoredBlocks/* not Null here */) {
-            if (!Private_ItemBlockFootprintsOverlap(Block, Entry)) {
-                continue;
-            }
-            if (Block.Family != Entry.Family) {
-                return False;
-            }
-            if (Private_SameCoord(Block.MacroblockCoord, Entry.Coord) && Block.MacroblockName == Entry.MacroblockName && Block.MacroblockDir == DirectionToIndex(Entry.Direction)) {
-                continue;
-            }
-            if (Private_IndexOfItemBlock(Previous, Block) < 0) {
-                Previous.add(Block);
-            }
-        }
+      }
     }
-    declare ItemBlock[] Removed;
-    foreach (Block in Previous) {
-        declare Index = Private_IndexOfItemBlock(StoredBlocks/* not Null here */, Block);
-        if (Index < 0) {
-            Private_RestoreRemoved(Removed);
-            return False;
-        }
-        declare Model = GetMacroblockModelFromFilePath(Block.MacroblockName);
-        if (Model == Null || !RemoveMacroblock(Model, Block.MacroblockCoord, DirectionFromIndex(Block.MacroblockDir))) {
-            Private_RestoreRemoved(Removed);
-            return False;
-        }
-        SetItemBlockList(Private_WithoutItemBlockAt(StoredBlocks/* not Null here */, Index));
-        Removed.add(Block);
+    foreach (Block in StoredBlocks/* not Null here */) {
+      if (!Private_ItemBlockFootprintsOverlap(Block, Entry)) {
+        continue;
+      }
+      if (Block.Family != Entry.Family) {
+        return False;
+      }
+      if (Private_SameCoord(Block.MacroblockCoord, Entry.Coord) && Block.MacroblockName == Entry.MacroblockName && Block.MacroblockDir == DirectionToIndex(Entry.Direction)) {
+        continue;
+      }
+      if (Private_IndexOfItemBlock(Previous, Block) < 0) {
+        Previous.add(Block);
+      }
     }
-    declare Placement[] Placed;
-    foreach (Entry in Additions) {
-        declare AlreadyThere = False;
-        foreach (Block in GetItemBlockList()) {
-            if (Private_SameCoord(Block.MacroblockCoord, Entry.Coord) && Block.MacroblockName == Entry.MacroblockName && Block.MacroblockDir == DirectionToIndex(Entry.Direction)) {
-                AlreadyThere = True;
-            }
-        }
-        if (AlreadyThere) {
-            continue;
-        }
-        if (!PlaceItemBlockWithFootprint(Entry.MacroblockName, Entry.Coord, Entry.Direction, Entry.Ground, Entry.Family, Entry.PieceIndex, Entry.Width, Entry.Depth)) {
-            foreach (NewBlock in Placed) {
-                if (RemoveItemBlocks(NewBlock.Coord, NewBlock.MacroblockName, DirectionToIndex(NewBlock.Direction)) == 0) {
-                    G_LastRollbackFailed = True;
-                }
-            }
-            Private_RestoreRemoved(Removed);
-            return False;
-        }
-        Placed.add(Entry);
+  }
+  declare ItemBlock[] Removed;
+  foreach (Block in Previous) {
+    declare Index = Private_IndexOfItemBlock(StoredBlocks/* not Null here */, Block);
+    if (Index < 0) {
+      Private_RestoreRemoved(Removed);
+      return False;
     }
-    Private_SnapshotItems();
-    return True;
+    declare Model = GetMacroblockModelFromFilePath(Block.MacroblockName);
+    if (Model == Null || !RemoveMacroblock(Model, Block.MacroblockCoord, DirectionFromIndex(Block.MacroblockDir))) {
+      Private_RestoreRemoved(Removed);
+      return False;
+    }
+    SetItemBlockList(Private_WithoutItemBlockAt(StoredBlocks/* not Null here */, Index));
+    Removed.add(Block);
+  }
+  declare Placement[] Placed;
+  foreach (Entry in Additions) {
+    declare AlreadyThere = False;
+    foreach (Block in GetItemBlockList()) {
+      if (Private_SameCoord(Block.MacroblockCoord, Entry.Coord) && Block.MacroblockName == Entry.MacroblockName && Block.MacroblockDir == DirectionToIndex(Entry.Direction)) {
+        AlreadyThere = True;
+      }
+    }
+    if (AlreadyThere) {
+      continue;
+    }
+    if (!PlaceItemBlockWithFootprint(Entry.MacroblockName, Entry.Coord, Entry.Direction, Entry.Ground, Entry.Family, Entry.PieceIndex, Entry.Width, Entry.Depth)) {
+      foreach (NewBlock in Placed) {
+        if (RemoveItemBlocks(NewBlock.Coord, NewBlock.MacroblockName, DirectionToIndex(NewBlock.Direction)) == 0) {
+          G_LastRollbackFailed = True;
+        }
+      }
+      Private_RestoreRemoved(Removed);
+      return False;
+    }
+    Placed.add(Entry);
+  }
+  Private_SnapshotItems();
+  return True;
 }
 
 Boolean Private_InsideFootprint(Int3 _Coord, Placement _Placement) {
-    return _Coord.Y == _Placement.Coord.Y && _Coord.X >= _Placement.Coord.X && _Coord.X < _Placement.Coord.X + MathLib::Max(1, _Placement.Width) && _Coord.Z >= _Placement.Coord.Z && _Coord.Z < _Placement.Coord.Z + MathLib::Max(1, _Placement.Depth);
+  return _Coord.Y == _Placement.Coord.Y && _Coord.X >= _Placement.Coord.X && _Coord.X < _Placement.Coord.X + MathLib::Max(1, _Placement.Width) && _Coord.Z >= _Placement.Coord.Z && _Coord.Z < _Placement.Coord.Z + MathLib::Max(1, _Placement.Depth);
 }
 
 Boolean ApplyResolvedChanges(ItemBlock[] _ToRemove, Placement[] _ToPlace, Int3[] _RemovedWater) {
-    G_LastRollbackFailed = False;
-    declare ItemBlock[] Removed;
-    declare metadata ItemBlock[] Atlas_ItemBlocks as StoredBlocks for Map;
-    foreach (Block in _ToRemove) {
-        declare Index = Private_IndexOfItemBlock(StoredBlocks/* not Null here */, Block);
-        if (Index < 0) {
-            Private_RestoreRemoved(Removed);
-            return False;
-        }
-        declare Model = GetMacroblockModelFromFilePath(Block.MacroblockName);
-        if (Model == Null || !RemoveMacroblock(Model, Block.MacroblockCoord, DirectionFromIndex(Block.MacroblockDir))) {
-            Private_RestoreRemoved(Removed);
-            return False;
-        }
-        SetItemBlockList(Private_WithoutItemBlockAt(StoredBlocks/* not Null here */, Index));
-        Removed.add(Block);
+  G_LastRollbackFailed = False;
+  declare ItemBlock[] Removed;
+  declare metadata ItemBlock[] Atlas_ItemBlocks as StoredBlocks for Map;
+  foreach (Block in _ToRemove) {
+    declare Index = Private_IndexOfItemBlock(StoredBlocks/* not Null here */, Block);
+    if (Index < 0) {
+      Private_RestoreRemoved(Removed);
+      return False;
     }
-    if (_ToPlace.count > 0 && !ExecutePlacementPlan(_ToPlace)) {
-        Private_RestoreRemoved(Removed);
-        return False;
+    declare Model = GetMacroblockModelFromFilePath(Block.MacroblockName);
+    if (Model == Null || !RemoveMacroblock(Model, Block.MacroblockCoord, DirectionFromIndex(Block.MacroblockDir))) {
+      Private_RestoreRemoved(Removed);
+      return False;
     }
-    SetRemovedWater(_RemovedWater);
-    Private_SnapshotItems();
-    return True;
+    SetItemBlockList(Private_WithoutItemBlockAt(StoredBlocks/* not Null here */, Index));
+    Removed.add(Block);
+  }
+  if (_ToPlace.count > 0 && !ExecutePlacementPlan(_ToPlace)) {
+    Private_RestoreRemoved(Removed);
+    return False;
+  }
+  SetRemovedWater(_RemovedWater);
+  Private_SnapshotItems();
+  return True;
 }
 
 Integer Private_SideBetween(Int3 _First, Int3 _Second) {
-    if (_First.Y != _Second.Y) {
-        return 0;
-    }
-    if (_First.X == _Second.X && _First.Z == _Second.Z + 1) {
-        return 1;
-    }
-    if (_First.X + 1 == _Second.X && _First.Z == _Second.Z) {
-        return 2;
-    }
-    if (_First.X == _Second.X && _First.Z + 1 == _Second.Z) {
-        return 4;
-    }
-    if (_First.X == _Second.X + 1 && _First.Z == _Second.Z) {
-        return 8;
-    }
+  if (_First.Y != _Second.Y) {
     return 0;
+  }
+  if (_First.X == _Second.X && _First.Z == _Second.Z + 1) {
+    return 1;
+  }
+  if (_First.X + 1 == _Second.X && _First.Z == _Second.Z) {
+    return 2;
+  }
+  if (_First.X == _Second.X && _First.Z + 1 == _Second.Z) {
+    return 4;
+  }
+  if (_First.X == _Second.X + 1 && _First.Z == _Second.Z) {
+    return 8;
+  }
+  return 0;
 }
 
 Integer Private_OppositeSide(Integer _Side) {
-    if (_Side == 1) {
-        return 4;
-    }
-    if (_Side == 2) {
-        return 8;
-    }
-    if (_Side == 4) {
-        return 1;
-    }
-    if (_Side == 8) {
-        return 2;
-    }
-    return 0;
+  if (_Side == 1) {
+    return 4;
+  }
+  if (_Side == 2) {
+    return 8;
+  }
+  if (_Side == 4) {
+    return 1;
+  }
+  if (_Side == 8) {
+    return 2;
+  }
+  return 0;
 }
 
 Integer Private_IndexOfCoord(Int3[] _Coords, Int3 _Coord) {
-    for (I, 0, _Coords.count - 1) {
-        if (Private_SameCoord(_Coords[I], _Coord)) {
-            return I;
-        }
+  for (I, 0, _Coords.count - 1) {
+    if (Private_SameCoord(_Coords[I], _Coord)) {
+      return I;
     }
-    return -1;
+  }
+  return -1;
 }
 
 Placement[] ResolveRoadPath(Int3[] _Path, Text _Family) {
-    declare Placement[] Result;
-    if (_Path.count == 0) {
-        return Result;
-    }
-    declare Int3[] Coords;
-    declare Integer[] Masks;
-    foreach (Coord in _Path) {
-        if (!Private_WithinMap(Coord) || Coord.Y != GetFakeGroundHeight(Coord.X, Coord.Z)) {
-            return Result;
-        }
-        if (Private_IndexOfCoord(Coords, Coord) < 0) {
-            Coords.add(Coord);
-            Masks.add(0);
-        }
-    }
-    for (I, 1, _Path.count - 1) {
-        declare Side = Private_SideBetween(_Path[I - 1], _Path[I]);
-        if (Side == 0) {
-            return Result;
-        }
-        declare PreviousIndex = Private_IndexOfCoord(Coords, _Path[I - 1]);
-        declare CurrentIndex = Private_IndexOfCoord(Coords, _Path[I]);
-        Masks[PreviousIndex] = Private_AddSide(Masks[PreviousIndex], Side);
-        Masks[CurrentIndex] = Private_AddSide(Masks[CurrentIndex], Private_OppositeSide(Side));
-    }
-    declare SelectedCount = Coords.count;
-    for (I, 0, SelectedCount - 1) {
-        foreach (Old in GetItemBlockList()) {
-            if (Old.Family != _Family || Old.MacroblockCoord.Y != Coords[I].Y) {
-                continue;
-            }
-            declare Side = Private_SideBetween(Coords[I], Old.MacroblockCoord);
-            if (Side == 0) {
-                continue;
-            }
-            declare NeighborIndex = Private_IndexOfCoord(Coords, Old.MacroblockCoord);
-            if (NeighborIndex < 0) {
-                NeighborIndex = Coords.count;
-                Coords.add(Old.MacroblockCoord);
-                Masks.add(0);
-            }
-            Masks[I] = Private_AddSide(Masks[I], Side);
-            Masks[NeighborIndex] = Private_AddSide(Masks[NeighborIndex], Private_OppositeSide(Side));
-        }
-    }
-    for (I, 0, Coords.count - 1) {
-        foreach (Old in GetItemBlockList()) {
-            if (!Private_SameCoord(Old.MacroblockCoord, Coords[I])) {
-                continue;
-            }
-            if (Old.Family != _Family) {
-                return [];
-            }
-            declare OldMask = Private_MaskForRoadPiece(Old.PieceIndex, DirectionFromIndex(Old.MacroblockDir));
-            if (Private_HasSide(OldMask, 1)) {
-                Masks[I] = Private_AddSide(Masks[I], 1);
-            }
-            if (Private_HasSide(OldMask, 2)) {
-                Masks[I] = Private_AddSide(Masks[I], 2);
-            }
-            if (Private_HasSide(OldMask, 4)) {
-                Masks[I] = Private_AddSide(Masks[I], 4);
-            }
-            if (Private_HasSide(OldMask, 8)) {
-                Masks[I] = Private_AddSide(Masks[I], 8);
-            }
-        }
-        declare Ground = Coords[I].Y == GetFakeGroundHeight(Coords[I].X, Coords[I].Z);
-        declare Piece = RoadPieceForMask(Masks[I]);
-        declare Variant = Private_VariantFor(_Family, Piece, Ground, Coords[I]);
-        if (Variant == "") {
-            return [];
-        }
-        Result.add(Placement { Coord = Coords[I], MacroblockName = Variant, Direction = RoadDirectionForMask(Masks[I]), Ground = Ground, Family = _Family, PieceIndex = Piece });
-    }
+  declare Placement[] Result;
+  if (_Path.count == 0) {
     return Result;
+  }
+  declare Int3[] Coords;
+  declare Integer[] Masks;
+  foreach (Coord in _Path) {
+    if (!Private_WithinMap(Coord) || Coord.Y != GetFakeGroundHeight(Coord.X, Coord.Z)) {
+      return Result;
+    }
+    if (Private_IndexOfCoord(Coords, Coord) < 0) {
+      Coords.add(Coord);
+      Masks.add(0);
+    }
+  }
+  for (I, 1, _Path.count - 1) {
+    declare Side = Private_SideBetween(_Path[I - 1], _Path[I]);
+    if (Side == 0) {
+      return Result;
+    }
+    declare PreviousIndex = Private_IndexOfCoord(Coords, _Path[I - 1]);
+    declare CurrentIndex = Private_IndexOfCoord(Coords, _Path[I]);
+    Masks[PreviousIndex] = Private_AddSide(Masks[PreviousIndex], Side);
+    Masks[CurrentIndex] = Private_AddSide(Masks[CurrentIndex], Private_OppositeSide(Side));
+  }
+  declare SelectedCount = Coords.count;
+  for (I, 0, SelectedCount - 1) {
+    foreach (Old in GetItemBlockList()) {
+      if (Old.Family != _Family || Old.MacroblockCoord.Y != Coords[I].Y) {
+        continue;
+      }
+      declare Side = Private_SideBetween(Coords[I], Old.MacroblockCoord);
+      if (Side == 0) {
+        continue;
+      }
+      declare NeighborIndex = Private_IndexOfCoord(Coords, Old.MacroblockCoord);
+      if (NeighborIndex < 0) {
+        NeighborIndex = Coords.count;
+        Coords.add(Old.MacroblockCoord);
+        Masks.add(0);
+      }
+      Masks[I] = Private_AddSide(Masks[I], Side);
+      Masks[NeighborIndex] = Private_AddSide(Masks[NeighborIndex], Private_OppositeSide(Side));
+    }
+  }
+  for (I, 0, Coords.count - 1) {
+    foreach (Old in GetItemBlockList()) {
+      if (!Private_SameCoord(Old.MacroblockCoord, Coords[I])) {
+        continue;
+      }
+      if (Old.Family != _Family) {
+        return [];
+      }
+      declare OldMask = Private_MaskForRoadPiece(Old.PieceIndex, DirectionFromIndex(Old.MacroblockDir));
+      if (Private_HasSide(OldMask, 1)) {
+        Masks[I] = Private_AddSide(Masks[I], 1);
+      }
+      if (Private_HasSide(OldMask, 2)) {
+        Masks[I] = Private_AddSide(Masks[I], 2);
+      }
+      if (Private_HasSide(OldMask, 4)) {
+        Masks[I] = Private_AddSide(Masks[I], 4);
+      }
+      if (Private_HasSide(OldMask, 8)) {
+        Masks[I] = Private_AddSide(Masks[I], 8);
+      }
+    }
+    declare Ground = Coords[I].Y == GetFakeGroundHeight(Coords[I].X, Coords[I].Z);
+    declare Piece = RoadPieceForMask(Masks[I]);
+    declare Variant = Private_VariantFor(_Family, Piece, Ground, Coords[I]);
+    if (Variant == "") {
+      return [];
+    }
+    Result.add(Placement { Coord = Coords[I], MacroblockName = Variant, Direction = RoadDirectionForMask(Masks[I]), Ground = Ground, Family = _Family, PieceIndex = Piece });
+  }
+  return Result;
 }
 
 Boolean PlaceRoadPath(Int3[] _Path, Text _Family) {
-    return ExecutePlacementPlan(ResolveRoadPath(_Path, _Family));
+  return ExecutePlacementPlan(ResolveRoadPath(_Path, _Family));
 }
 
 FreeformCandidate ResolveFreeformOverlap(Integer _OldPiece, CMapEditorPlugin::CardinalDirections _OldDirection, Integer _NewPiece, CMapEditorPlugin::CardinalDirections _NewDirection) {
-    declare Result = FreeformCandidate { Piece = _NewPiece, Direction = _NewDirection, Priority = 0 };
-    declare Difference = (DirectionToIndex(_NewDirection) - DirectionToIndex(_OldDirection) + 4) % 4;
-    declare Perpendicular = Difference == 1 || Difference == 3;
-    declare Opposite = Difference == 2;
-    if (_OldPiece == 11 && _NewPiece == 11 && Perpendicular) {
-        Result.Piece = 4;
-        Result.Priority = 3;
-    } else if (((_OldPiece == 10 && _NewPiece == 9) || (_OldPiece == 9 && _NewPiece == 10)) && Opposite) {
-        Result.Piece = 3;
-        Result.Priority = 3;
+  declare Result = FreeformCandidate { Piece = _NewPiece, Direction = _NewDirection, Priority = 0 };
+  declare Difference = (DirectionToIndex(_NewDirection) - DirectionToIndex(_OldDirection) + 4) % 4;
+  declare Perpendicular = Difference == 1 || Difference == 3;
+  declare Opposite = Difference == 2;
+  if (_OldPiece == 11 && _NewPiece == 11 && Perpendicular) {
+    Result.Piece = 4;
+    Result.Priority = 3;
+  } else if (((_OldPiece == 10 && _NewPiece == 9) || (_OldPiece == 9 && _NewPiece == 10)) && Opposite) {
+    Result.Piece = 3;
+    Result.Priority = 3;
+  } else {
+    if (_OldPiece == 9 && _NewPiece == 9 && Opposite) {
+      Result.Piece = 2;
+      Result.Priority = 3;
+    } else if ((_OldPiece == 5 && (_NewPiece == 11 || _NewPiece == 12)) || ((_OldPiece == 11 || _OldPiece == 12) && _NewPiece == 5)) {
+      Result.Piece = 1;
+      Result.Priority = 3;
     } else {
-        if (_OldPiece == 9 && _NewPiece == 9 && Opposite) {
-            Result.Piece = 2;
-            Result.Priority = 3;
-        } else if ((_OldPiece == 5 && (_NewPiece == 11 || _NewPiece == 12)) || ((_OldPiece == 11 || _OldPiece == 12) && _NewPiece == 5)) {
-            Result.Piece = 1;
-            Result.Priority = 3;
+      if (_OldPiece == 9 && _NewPiece == 9 && Perpendicular) {
+        Result.Piece = 0;
+        Result.Priority = 2;
+      } else if (_OldPiece == 12 && _NewPiece == 12 && !Perpendicular) {
+        Result.Piece = 11;
+        Result.Priority = 2;
+      } else {
+        if (_OldPiece == 12 && _NewPiece == 12 && Perpendicular) {
+          Result.Piece = 10;
+          Result.Priority = 2;
+        } else if (_OldPiece == 12 && _NewPiece == 11 && Perpendicular) {
+          Result.Piece = 8;
+          Result.Priority = 2;
         } else {
-            if (_OldPiece == 9 && _NewPiece == 9 && Perpendicular) {
-                Result.Piece = 0;
-                Result.Priority = 2;
-            } else if (_OldPiece == 12 && _NewPiece == 12 && !Perpendicular) {
-                Result.Piece = 11;
-                Result.Priority = 2;
-            } else {
-                if (_OldPiece == 12 && _NewPiece == 12 && Perpendicular) {
-                    Result.Piece = 10;
-                    Result.Priority = 2;
-                } else if (_OldPiece == 12 && _NewPiece == 11 && Perpendicular) {
-                    Result.Piece = 8;
-                    Result.Priority = 2;
-                } else {
-                    if (_OldPiece == 9 && _NewPiece == 12 && Perpendicular) {
-                        Result.Piece = 6;
-                        if (Difference == 3) {
-                            Result.Piece = 7;
-                        }
-                        Result.Priority = 2;
-                    }
-                }
+          if (_OldPiece == 9 && _NewPiece == 12 && Perpendicular) {
+            Result.Piece = 6;
+            if (Difference == 3) {
+              Result.Piece = 7;
             }
+            Result.Priority = 2;
+          }
         }
+      }
     }
-    return Result;
+  }
+  return Result;
 }
 
 Placement[] ResolveFreeform1x1(Int3[] _Selection, Text _Family) {
-    declare Placement[] Result;
-    if (_Selection.count == 0) {
-        return Result;
-    }
-    declare MinX = _Selection[0].X;
-    declare MaxX = MinX;
-    declare MinZ = _Selection[0].Z;
-    declare MaxZ = MinZ;
-    declare Y = _Selection[0].Y;
-    foreach (Coord in _Selection) {
-        if (!Private_WithinMap(Coord) || Coord.Y != Y || Coord.Y != GetFakeGroundHeight(Coord.X, Coord.Z)) {
-            return [];
-        }
-        MinX = MathLib::Min(MinX, Coord.X);
-        MaxX = MathLib::Max(MaxX, Coord.X);
-        MinZ = MathLib::Min(MinZ, Coord.Z);
-        MaxZ = MathLib::Max(MaxZ, Coord.Z);
-    }
-    if (_Selection.count != (MaxX - MinX + 1) * (MaxZ - MinZ + 1)) {
-        return Result;
-    }
-    for (X, MinX, MaxX) {
-        for (Z, MinZ, MaxZ) {
-            declare Coord = <X, Y, Z>;
-            if (Private_IndexOfCoord(_Selection, Coord) < 0) {
-                return [];
-            }
-            declare Piece = 13;
-            declare Direction = CMapEditorPlugin::CardinalDirections::North;
-            if (MaxX > MinX && MaxZ == MinZ) {
-                Piece = 11;
-                Direction = CMapEditorPlugin::CardinalDirections::East;
-                if (X == MinX || X == MaxX) {
-                    Piece = 12;
-                    declare Inward = 2;
-                    if (X == MaxX) {
-                        Inward = 8;
-                    }
-                    Direction = RoadDirectionForMask(15 - Private_OppositeSide(Inward));
-                }
-            } else if (MaxZ > MinZ && MaxX == MinX) {
-                Piece = 11;
-                Direction = CMapEditorPlugin::CardinalDirections::North;
-                if (Z == MinZ || Z == MaxZ) {
-                    Piece = 12;
-                    declare Inward = 4;
-                    if (Z == MaxZ) {
-                        Inward = 1;
-                    }
-                    Direction = RoadDirectionForMask(15 - Private_OppositeSide(Inward));
-                }
-            } else {
-                if (MaxX > MinX && MaxZ > MinZ) {
-                    if ((X == MinX || X == MaxX) && (Z == MinZ || Z == MaxZ)) {
-                        Piece = 9;
-                        declare Mask = 0;
-                        if (X == MinX) {
-                            Mask += 2;
-                        } else {
-                            Mask += 8;
-                        }
-                        if (Z == MinZ) {
-                            Mask += 4;
-                        } else {
-                            Mask += 1;
-                        }
-                        Direction = RoadDirectionForMask(Mask);
-                    } else if (X == MinX || X == MaxX || Z == MinZ || Z == MaxZ) {
-                        Piece = 5;
-                        if (X == MinX) {
-                            Direction = CMapEditorPlugin::CardinalDirections::East;
-                        } else if (X == MaxX) {
-                            Direction = CMapEditorPlugin::CardinalDirections::West;
-                        } else {
-                            if (Z == MinZ) {
-                                Direction = CMapEditorPlugin::CardinalDirections::South;
-                            }
-                        }
-                    } else {
-                        Piece = 4;
-                    }
-                }
-            }
-            declare Integer[] SeenStates;
-            SeenStates.add(Piece * 4 + DirectionToIndex(Direction));
-            for (Pass, 0, 8 - 1) {
-                declare Best = FreeformCandidate { Piece = Piece, Direction = Direction, Priority = 0 };
-                foreach (Old in GetItemBlockList()) {
-                    if (!Private_SameCoord(Old.MacroblockCoord, Coord)) {
-                        continue;
-                    }
-                    if (Old.Family != _Family) {
-                        return [];
-                    }
-                    declare Candidate = ResolveFreeformOverlap(Old.PieceIndex, DirectionFromIndex(Old.MacroblockDir), Piece, Direction);
-                    if (Candidate.Priority > Best.Priority) {
-                        Best = Candidate;
-                    } else if (Candidate.Priority > 0 && Candidate.Priority == Best.Priority && (Candidate.Piece != Best.Piece || Candidate.Direction != Best.Direction)) {
-                        return [];
-                    }
-                }
-                if (Best.Priority == 0 || (Best.Piece == Piece && Best.Direction == Direction)) {
-                    break;
-                }
-                declare State = Best.Piece * 4 + DirectionToIndex(Best.Direction);
-                if (SeenStates.exists(State) || Pass == 7) {
-                    return [];
-                }
-                SeenStates.add(State);
-                Piece = Best.Piece;
-                Direction = Best.Direction;
-            }
-            declare Variant = Private_VariantFor(_Family, Piece, True, Coord);
-            if (Variant == "") {
-                return [];
-            }
-            Result.add(Placement { Coord = Coord, MacroblockName = Variant, Direction = Direction, Ground = True, Family = _Family, PieceIndex = Piece, Width = 1, Depth = 1 });
-        }
-    }
+  declare Placement[] Result;
+  if (_Selection.count == 0) {
     return Result;
+  }
+  declare MinX = _Selection[0].X;
+  declare MaxX = MinX;
+  declare MinZ = _Selection[0].Z;
+  declare MaxZ = MinZ;
+  declare Y = _Selection[0].Y;
+  foreach (Coord in _Selection) {
+    if (!Private_WithinMap(Coord) || Coord.Y != Y || Coord.Y != GetFakeGroundHeight(Coord.X, Coord.Z)) {
+      return [];
+    }
+    MinX = MathLib::Min(MinX, Coord.X);
+    MaxX = MathLib::Max(MaxX, Coord.X);
+    MinZ = MathLib::Min(MinZ, Coord.Z);
+    MaxZ = MathLib::Max(MaxZ, Coord.Z);
+  }
+  if (_Selection.count != (MaxX - MinX + 1) * (MaxZ - MinZ + 1)) {
+    return Result;
+  }
+  for (X, MinX, MaxX) {
+    for (Z, MinZ, MaxZ) {
+      declare Coord = <X, Y, Z>;
+      if (Private_IndexOfCoord(_Selection, Coord) < 0) {
+        return [];
+      }
+      declare Piece = 13;
+      declare Direction = CMapEditorPlugin::CardinalDirections::North;
+      if (MaxX > MinX && MaxZ == MinZ) {
+        Piece = 11;
+        Direction = CMapEditorPlugin::CardinalDirections::East;
+        if (X == MinX || X == MaxX) {
+          Piece = 12;
+          declare Inward = 2;
+          if (X == MaxX) {
+            Inward = 8;
+          }
+          Direction = RoadDirectionForMask(15 - Private_OppositeSide(Inward));
+        }
+      } else if (MaxZ > MinZ && MaxX == MinX) {
+        Piece = 11;
+        Direction = CMapEditorPlugin::CardinalDirections::North;
+        if (Z == MinZ || Z == MaxZ) {
+          Piece = 12;
+          declare Inward = 4;
+          if (Z == MaxZ) {
+            Inward = 1;
+          }
+          Direction = RoadDirectionForMask(15 - Private_OppositeSide(Inward));
+        }
+      } else {
+        if (MaxX > MinX && MaxZ > MinZ) {
+          if ((X == MinX || X == MaxX) && (Z == MinZ || Z == MaxZ)) {
+            Piece = 9;
+            declare Mask = 0;
+            if (X == MinX) {
+              Mask += 2;
+            } else {
+              Mask += 8;
+            }
+            if (Z == MinZ) {
+              Mask += 4;
+            } else {
+              Mask += 1;
+            }
+            Direction = RoadDirectionForMask(Mask);
+          } else if (X == MinX || X == MaxX || Z == MinZ || Z == MaxZ) {
+            Piece = 5;
+            if (X == MinX) {
+              Direction = CMapEditorPlugin::CardinalDirections::East;
+            } else if (X == MaxX) {
+              Direction = CMapEditorPlugin::CardinalDirections::West;
+            } else {
+              if (Z == MinZ) {
+                Direction = CMapEditorPlugin::CardinalDirections::South;
+              }
+            }
+          } else {
+            Piece = 4;
+          }
+        }
+      }
+      declare Integer[] SeenStates;
+      SeenStates.add(Piece * 4 + DirectionToIndex(Direction));
+      for (Pass, 0, 8 - 1) {
+        declare Best = FreeformCandidate { Piece = Piece, Direction = Direction, Priority = 0 };
+        foreach (Old in GetItemBlockList()) {
+          if (!Private_SameCoord(Old.MacroblockCoord, Coord)) {
+            continue;
+          }
+          if (Old.Family != _Family) {
+            return [];
+          }
+          declare Candidate = ResolveFreeformOverlap(Old.PieceIndex, DirectionFromIndex(Old.MacroblockDir), Piece, Direction);
+          if (Candidate.Priority > Best.Priority) {
+            Best = Candidate;
+          } else if (Candidate.Priority > 0 && Candidate.Priority == Best.Priority && (Candidate.Piece != Best.Piece || Candidate.Direction != Best.Direction)) {
+            return [];
+          }
+        }
+        if (Best.Priority == 0 || (Best.Piece == Piece && Best.Direction == Direction)) {
+          break;
+        }
+        declare State = Best.Piece * 4 + DirectionToIndex(Best.Direction);
+        if (SeenStates.exists(State) || Pass == 7) {
+          return [];
+        }
+        SeenStates.add(State);
+        Piece = Best.Piece;
+        Direction = Best.Direction;
+      }
+      declare Variant = Private_VariantFor(_Family, Piece, True, Coord);
+      if (Variant == "") {
+        return [];
+      }
+      Result.add(Placement { Coord = Coord, MacroblockName = Variant, Direction = Direction, Ground = True, Family = _Family, PieceIndex = Piece, Width = 1, Depth = 1 });
+    }
+  }
+  return Result;
 }
 
 Boolean PlaceFreeform1x1(Int3[] _Selection, Text _Family) {
-    return ExecutePlacementPlan(ResolveFreeform1x1(_Selection, _Family));
+  return ExecutePlacementPlan(ResolveFreeform1x1(_Selection, _Family));
 }
 
 Placement[] ResolveCube2x2(Int3[] _Selection, Text _Family) {
-    declare Placement[] Result;
-    if (_Selection.count == 0) {
-        return Result;
-    }
-    declare MinX = _Selection[0].X;
-    declare MaxX = MinX;
-    declare MinY = _Selection[0].Y;
-    declare MaxY = MinY;
-    declare MinZ = _Selection[0].Z;
-    declare MaxZ = MinZ;
-    foreach (Coord in _Selection) {
-        MinX = MathLib::Min(MinX, Coord.X);
-        MaxX = MathLib::Max(MaxX, Coord.X);
-        MinY = MathLib::Min(MinY, Coord.Y);
-        MaxY = MathLib::Max(MaxY, Coord.Y);
-        MinZ = MathLib::Min(MinZ, Coord.Z);
-        MaxZ = MathLib::Max(MaxZ, Coord.Z);
-    }
-    declare SizeX = MaxX - MinX + 1;
-    declare SizeZ = MaxZ - MinZ + 1;
-    if (SizeX < 2 || SizeZ < 2 || SizeX != SizeZ || SizeX % 2 != 0 || _Selection.count != SizeX * SizeZ * (MaxY - MinY + 1)) {
-        return Result;
-    }
-    foreach (Coord in _Selection) {
-        if (!Private_WithinMap(Coord)) {
-            return [];
-        }
-    }
-    for (X, MinX, MaxX) {
-        for (Z, MinZ, MaxZ) {
-            declare Ground = GetFakeGroundHeight(X, Z);
-            if (Ground != MinY) {
-                return [];
-            }
-            for (Y, MinY, MaxY) {
-                if (Private_IndexOfCoord(_Selection, <X, Y, Z>) < 0) {
-                    return [];
-                }
-            }
-        }
-    }
-    declare X = MinX;
-    while (X <= MaxX) {
-        declare Z = MinZ;
-        while (Z <= MaxZ) {
-            declare Mask = 0;
-            if (Z > MinZ) {
-                Mask += 1;
-            }
-            if (X < MaxX - 1) {
-                Mask += 2;
-            }
-            if (Z < MaxZ - 1) {
-                Mask += 4;
-            }
-            if (X > MinX) {
-                Mask += 8;
-            }
-            if (!G_CubePieceMapping.existskey(_Family) || !G_CubePieceMapping[_Family].existskey(Mask)) {
-                return [];
-            }
-            declare Piece = G_CubePieceMapping[_Family][Mask];
-            for (Y, MinY, MaxY) {
-                declare Layer = _Family ^ "#middle";
-                if (Y == MinY) {
-                    Layer = _Family ^ "#bottom";
-                }
-                if (Y == MaxY) {
-                    Layer = _Family ^ "#top";
-                }
-                declare Anchor = <X, Y, Z>;
-                declare Variant = Private_VariantFor(Layer, Piece, Y == MinY, Anchor);
-                if (Variant == "") {
-                    return [];
-                }
-                Result.add(Placement { Coord = Anchor, MacroblockName = Variant, Direction = CMapEditorPlugin::CardinalDirections::North, Ground = Y == MinY, Family = _Family, PieceIndex = Piece, Width = 2, Depth = 2 });
-            }
-            Z += 2;
-        }
-        X += 2;
-    }
+  declare Placement[] Result;
+  if (_Selection.count == 0) {
     return Result;
+  }
+  declare MinX = _Selection[0].X;
+  declare MaxX = MinX;
+  declare MinY = _Selection[0].Y;
+  declare MaxY = MinY;
+  declare MinZ = _Selection[0].Z;
+  declare MaxZ = MinZ;
+  foreach (Coord in _Selection) {
+    MinX = MathLib::Min(MinX, Coord.X);
+    MaxX = MathLib::Max(MaxX, Coord.X);
+    MinY = MathLib::Min(MinY, Coord.Y);
+    MaxY = MathLib::Max(MaxY, Coord.Y);
+    MinZ = MathLib::Min(MinZ, Coord.Z);
+    MaxZ = MathLib::Max(MaxZ, Coord.Z);
+  }
+  declare SizeX = MaxX - MinX + 1;
+  declare SizeZ = MaxZ - MinZ + 1;
+  if (SizeX < 2 || SizeZ < 2 || SizeX != SizeZ || SizeX % 2 != 0 || _Selection.count != SizeX * SizeZ * (MaxY - MinY + 1)) {
+    return Result;
+  }
+  foreach (Coord in _Selection) {
+    if (!Private_WithinMap(Coord)) {
+      return [];
+    }
+  }
+  for (X, MinX, MaxX) {
+    for (Z, MinZ, MaxZ) {
+      declare Ground = GetFakeGroundHeight(X, Z);
+      if (Ground != MinY) {
+        return [];
+      }
+      for (Y, MinY, MaxY) {
+        if (Private_IndexOfCoord(_Selection, <X, Y, Z>) < 0) {
+          return [];
+        }
+      }
+    }
+  }
+  declare X = MinX;
+  while (X <= MaxX) {
+    declare Z = MinZ;
+    while (Z <= MaxZ) {
+      declare Mask = 0;
+      if (Z > MinZ) {
+        Mask += 1;
+      }
+      if (X < MaxX - 1) {
+        Mask += 2;
+      }
+      if (Z < MaxZ - 1) {
+        Mask += 4;
+      }
+      if (X > MinX) {
+        Mask += 8;
+      }
+      if (!G_CubePieceMapping.existskey(_Family) || !G_CubePieceMapping[_Family].existskey(Mask)) {
+        return [];
+      }
+      declare Piece = G_CubePieceMapping[_Family][Mask];
+      for (Y, MinY, MaxY) {
+        declare Layer = _Family ^ "#middle";
+        if (Y == MinY) {
+          Layer = _Family ^ "#bottom";
+        }
+        if (Y == MaxY) {
+          Layer = _Family ^ "#top";
+        }
+        declare Anchor = <X, Y, Z>;
+        declare Variant = Private_VariantFor(Layer, Piece, Y == MinY, Anchor);
+        if (Variant == "") {
+          return [];
+        }
+        Result.add(Placement { Coord = Anchor, MacroblockName = Variant, Direction = CMapEditorPlugin::CardinalDirections::North, Ground = Y == MinY, Family = _Family, PieceIndex = Piece, Width = 2, Depth = 2 });
+      }
+      Z += 2;
+    }
+    X += 2;
+  }
+  return Result;
 }
 
 Boolean PlaceCube2x2(Int3[] _Selection, Text _Family) {
-    return ExecutePlacementPlan(ResolveCube2x2(_Selection, _Family));
+  return ExecutePlacementPlan(ResolveCube2x2(_Selection, _Family));
 }
 
 Placement[] ResolveTower(Int3[] _Selection, Text _Family, Integer _Width, Integer _Depth) {
-    declare Placement[] Result;
-    if (_Selection.count == 0 || _Width < 1 || _Depth < 1) {
-        return Result;
-    }
-    declare MinX = _Selection[0].X;
-    declare MaxX = MinX;
-    declare MinY = _Selection[0].Y;
-    declare MaxY = MinY;
-    declare MinZ = _Selection[0].Z;
-    declare MaxZ = MinZ;
-    foreach (Coord in _Selection) {
-        MinX = MathLib::Min(MinX, Coord.X);
-        MaxX = MathLib::Max(MaxX, Coord.X);
-        MinY = MathLib::Min(MinY, Coord.Y);
-        MaxY = MathLib::Max(MaxY, Coord.Y);
-        MinZ = MathLib::Min(MinZ, Coord.Z);
-        MaxZ = MathLib::Max(MaxZ, Coord.Z);
-    }
-    if ((MaxX - MinX + 1) % _Width != 0 || (MaxZ - MinZ + 1) % _Depth != 0 || _Selection.count != (MaxX - MinX + 1) * (MaxZ - MinZ + 1) * (MaxY - MinY + 1)) {
-        return Result;
-    }
-    for (X, MinX, MaxX) {
-        for (Z, MinZ, MaxZ) {
-            for (Y, MinY, MaxY) {
-                if (Private_IndexOfCoord(_Selection, <X, Y, Z>) < 0 || GetFakeGroundHeight(X, Z) != MinY) {
-                    return [];
-                }
-            }
-        }
-    }
-    declare X = MinX;
-    while (X <= MaxX) {
-        declare Z = MinZ;
-        while (Z <= MaxZ) {
-            for (Y, MinY, MaxY) {
-                declare Anchor = <X, Y, Z>;
-                declare Layer = _Family ^ "#middle";
-                if (Y == MinY) {
-                    Layer = _Family ^ "#bottom";
-                }
-                if (Y == MaxY) {
-                    Layer = _Family ^ "#top";
-                }
-                declare Variant = Private_VariantFor(Layer, 0, Y == MinY, Anchor);
-                if (Variant == "") {
-                    return [];
-                }
-                Result.add(Placement { Coord = Anchor, MacroblockName = Variant, Direction = CMapEditorPlugin::CardinalDirections::North, Ground = Y == MinY, Family = _Family, PieceIndex = 0, Width = _Width, Depth = _Depth });
-            }
-            Z += _Depth;
-        }
-        X += _Width;
-    }
+  declare Placement[] Result;
+  if (_Selection.count == 0 || _Width < 1 || _Depth < 1) {
     return Result;
+  }
+  declare MinX = _Selection[0].X;
+  declare MaxX = MinX;
+  declare MinY = _Selection[0].Y;
+  declare MaxY = MinY;
+  declare MinZ = _Selection[0].Z;
+  declare MaxZ = MinZ;
+  foreach (Coord in _Selection) {
+    MinX = MathLib::Min(MinX, Coord.X);
+    MaxX = MathLib::Max(MaxX, Coord.X);
+    MinY = MathLib::Min(MinY, Coord.Y);
+    MaxY = MathLib::Max(MaxY, Coord.Y);
+    MinZ = MathLib::Min(MinZ, Coord.Z);
+    MaxZ = MathLib::Max(MaxZ, Coord.Z);
+  }
+  if ((MaxX - MinX + 1) % _Width != 0 || (MaxZ - MinZ + 1) % _Depth != 0 || _Selection.count != (MaxX - MinX + 1) * (MaxZ - MinZ + 1) * (MaxY - MinY + 1)) {
+    return Result;
+  }
+  for (X, MinX, MaxX) {
+    for (Z, MinZ, MaxZ) {
+      for (Y, MinY, MaxY) {
+        if (Private_IndexOfCoord(_Selection, <X, Y, Z>) < 0 || GetFakeGroundHeight(X, Z) != MinY) {
+          return [];
+        }
+      }
+    }
+  }
+  declare X = MinX;
+  while (X <= MaxX) {
+    declare Z = MinZ;
+    while (Z <= MaxZ) {
+      for (Y, MinY, MaxY) {
+        declare Anchor = <X, Y, Z>;
+        declare Layer = _Family ^ "#middle";
+        if (Y == MinY) {
+          Layer = _Family ^ "#bottom";
+        }
+        if (Y == MaxY) {
+          Layer = _Family ^ "#top";
+        }
+        declare Variant = Private_VariantFor(Layer, 0, Y == MinY, Anchor);
+        if (Variant == "") {
+          return [];
+        }
+        Result.add(Placement { Coord = Anchor, MacroblockName = Variant, Direction = CMapEditorPlugin::CardinalDirections::North, Ground = Y == MinY, Family = _Family, PieceIndex = 0, Width = _Width, Depth = _Depth });
+      }
+      Z += _Depth;
+    }
+    X += _Width;
+  }
+  return Result;
 }
 
 Boolean PlaceTower(Int3[] _Selection, Text _Family, Integer _Width, Integer _Depth) {
-    return ExecutePlacementPlan(ResolveTower(_Selection, _Family, _Width, _Depth));
+  return ExecutePlacementPlan(ResolveTower(_Selection, _Family, _Width, _Depth));
 }
 
 Placement[] ResolveFreeform2x2(Int3[] _Selection, Text _Family, Integer _Height) {
-    declare Placement[] Result;
-    if (_Selection.count < 4 || _Height < 1) {
-        return Result;
-    }
-    declare MinX = _Selection[0].X;
-    declare MinZ = _Selection[0].Z;
-    foreach (Coord in _Selection) {
-        MinX = MathLib::Min(MinX, Coord.X);
-        MinZ = MathLib::Min(MinZ, Coord.Z);
-    }
-    declare Int3[] Anchors;
-    foreach (Coord in _Selection) {
-        declare X = MinX + (Coord.X - MinX) / 2 * 2;
-        declare Z = MinZ + (Coord.Z - MinZ) / 2 * 2;
-        declare Anchor = <X, Coord.Y, Z>;
-        if (Private_IndexOfCoord(Anchors, Anchor) < 0) {
-            Anchors.add(Anchor);
-        }
-    }
-    declare Int3[] Connected;
-    Connected.add(Anchors[0]);
-    declare I = 0;
-    while (I < Connected.count) {
-        declare Anchor = Connected[I];
-        declare North = <Anchor.X, Anchor.Y, Anchor.Z - 2>;
-        declare East = <Anchor.X + 2, Anchor.Y, Anchor.Z>;
-        declare South = <Anchor.X, Anchor.Y, Anchor.Z + 2>;
-        declare West = <Anchor.X - 2, Anchor.Y, Anchor.Z>;
-        if (Private_IndexOfCoord(Anchors, North) >= 0 && Private_IndexOfCoord(Connected, North) < 0) {
-            Connected.add(North);
-        }
-        if (Private_IndexOfCoord(Anchors, East) >= 0 && Private_IndexOfCoord(Connected, East) < 0) {
-            Connected.add(East);
-        }
-        if (Private_IndexOfCoord(Anchors, South) >= 0 && Private_IndexOfCoord(Connected, South) < 0) {
-            Connected.add(South);
-        }
-        if (Private_IndexOfCoord(Anchors, West) >= 0 && Private_IndexOfCoord(Connected, West) < 0) {
-            Connected.add(West);
-        }
-        I += 1;
-    }
-    if (Connected.count != Anchors.count) {
-        return [];
-    }
-    foreach (Anchor in Anchors) {
-        for (X, Anchor.X, Anchor.X + 2 - 1) {
-            for (Z, Anchor.Z, Anchor.Z + 2 - 1) {
-                if (!Private_WithinMap(<X, Anchor.Y, Z>) || Private_IndexOfCoord(_Selection, <X, Anchor.Y, Z>) < 0 || GetFakeGroundHeight(X, Z) != Anchor.Y) {
-                    return [];
-                }
-            }
-        }
-        declare Mask = 0;
-        if (Private_IndexOfCoord(Anchors, <Anchor.X, Anchor.Y, Anchor.Z - 2>) >= 0) {
-            Mask += 1;
-        }
-        if (Private_IndexOfCoord(Anchors, <Anchor.X + 2, Anchor.Y, Anchor.Z>) >= 0) {
-            Mask += 2;
-        }
-        if (Private_IndexOfCoord(Anchors, <Anchor.X, Anchor.Y, Anchor.Z + 2>) >= 0) {
-            Mask += 4;
-        }
-        if (Private_IndexOfCoord(Anchors, <Anchor.X - 2, Anchor.Y, Anchor.Z>) >= 0) {
-            Mask += 8;
-        }
-        declare Piece = 3;
-        if (Mask == 0 || Mask == 15) {
-            Piece = 0;
-        } else if (Mask == 3 || Mask == 6 || Mask == 9 || Mask == 12) {
-            Piece = 2;
-        } else {
-            if (Mask == 7 || Mask == 11 || Mask == 13 || Mask == 14) {
-                Piece = 1;
-            }
-        }
-        declare Direction = RoadDirectionForMask(Mask);
-        for (LayerIndex, 0, _Height - 1) {
-            declare Y = Anchor.Y + LayerIndex;
-            declare Layer = _Family ^ "#middle";
-            if (LayerIndex == 0) {
-                Layer = _Family ^ "#bottom";
-            }
-            if (LayerIndex == _Height - 1) {
-                Layer = _Family ^ "#top";
-            }
-            declare PlacedAt = <Anchor.X, Y, Anchor.Z>;
-            declare Variant = Private_VariantFor(Layer, Piece, LayerIndex == 0, PlacedAt);
-            if (Variant == "") {
-                return [];
-            }
-            Result.add(Placement { Coord = PlacedAt, MacroblockName = Variant, Direction = Direction, Ground = LayerIndex == 0, Family = _Family, PieceIndex = Piece, Width = 2, Depth = 2 });
-        }
-    }
+  declare Placement[] Result;
+  if (_Selection.count < 4 || _Height < 1) {
     return Result;
+  }
+  declare MinX = _Selection[0].X;
+  declare MinZ = _Selection[0].Z;
+  foreach (Coord in _Selection) {
+    MinX = MathLib::Min(MinX, Coord.X);
+    MinZ = MathLib::Min(MinZ, Coord.Z);
+  }
+  declare Int3[] Anchors;
+  foreach (Coord in _Selection) {
+    declare X = MinX + (Coord.X - MinX) / 2 * 2;
+    declare Z = MinZ + (Coord.Z - MinZ) / 2 * 2;
+    declare Anchor = <X, Coord.Y, Z>;
+    if (Private_IndexOfCoord(Anchors, Anchor) < 0) {
+      Anchors.add(Anchor);
+    }
+  }
+  declare Int3[] Connected;
+  Connected.add(Anchors[0]);
+  declare I = 0;
+  while (I < Connected.count) {
+    declare Anchor = Connected[I];
+    declare North = <Anchor.X, Anchor.Y, Anchor.Z - 2>;
+    declare East = <Anchor.X + 2, Anchor.Y, Anchor.Z>;
+    declare South = <Anchor.X, Anchor.Y, Anchor.Z + 2>;
+    declare West = <Anchor.X - 2, Anchor.Y, Anchor.Z>;
+    if (Private_IndexOfCoord(Anchors, North) >= 0 && Private_IndexOfCoord(Connected, North) < 0) {
+      Connected.add(North);
+    }
+    if (Private_IndexOfCoord(Anchors, East) >= 0 && Private_IndexOfCoord(Connected, East) < 0) {
+      Connected.add(East);
+    }
+    if (Private_IndexOfCoord(Anchors, South) >= 0 && Private_IndexOfCoord(Connected, South) < 0) {
+      Connected.add(South);
+    }
+    if (Private_IndexOfCoord(Anchors, West) >= 0 && Private_IndexOfCoord(Connected, West) < 0) {
+      Connected.add(West);
+    }
+    I += 1;
+  }
+  if (Connected.count != Anchors.count) {
+    return [];
+  }
+  foreach (Anchor in Anchors) {
+    for (X, Anchor.X, Anchor.X + 2 - 1) {
+      for (Z, Anchor.Z, Anchor.Z + 2 - 1) {
+        if (!Private_WithinMap(<X, Anchor.Y, Z>) || Private_IndexOfCoord(_Selection, <X, Anchor.Y, Z>) < 0 || GetFakeGroundHeight(X, Z) != Anchor.Y) {
+          return [];
+        }
+      }
+    }
+    declare Mask = 0;
+    if (Private_IndexOfCoord(Anchors, <Anchor.X, Anchor.Y, Anchor.Z - 2>) >= 0) {
+      Mask += 1;
+    }
+    if (Private_IndexOfCoord(Anchors, <Anchor.X + 2, Anchor.Y, Anchor.Z>) >= 0) {
+      Mask += 2;
+    }
+    if (Private_IndexOfCoord(Anchors, <Anchor.X, Anchor.Y, Anchor.Z + 2>) >= 0) {
+      Mask += 4;
+    }
+    if (Private_IndexOfCoord(Anchors, <Anchor.X - 2, Anchor.Y, Anchor.Z>) >= 0) {
+      Mask += 8;
+    }
+    declare Piece = 3;
+    if (Mask == 0 || Mask == 15) {
+      Piece = 0;
+    } else if (Mask == 3 || Mask == 6 || Mask == 9 || Mask == 12) {
+      Piece = 2;
+    } else {
+      if (Mask == 7 || Mask == 11 || Mask == 13 || Mask == 14) {
+        Piece = 1;
+      }
+    }
+    declare Direction = RoadDirectionForMask(Mask);
+    for (LayerIndex, 0, _Height - 1) {
+      declare Y = Anchor.Y + LayerIndex;
+      declare Layer = _Family ^ "#middle";
+      if (LayerIndex == 0) {
+        Layer = _Family ^ "#bottom";
+      }
+      if (LayerIndex == _Height - 1) {
+        Layer = _Family ^ "#top";
+      }
+      declare PlacedAt = <Anchor.X, Y, Anchor.Z>;
+      declare Variant = Private_VariantFor(Layer, Piece, LayerIndex == 0, PlacedAt);
+      if (Variant == "") {
+        return [];
+      }
+      Result.add(Placement { Coord = PlacedAt, MacroblockName = Variant, Direction = Direction, Ground = LayerIndex == 0, Family = _Family, PieceIndex = Piece, Width = 2, Depth = 2 });
+    }
+  }
+  return Result;
 }
 
 Boolean PlaceFreeform2x2(Int3[] _Selection, Text _Family, Integer _Height) {
-    return ExecutePlacementPlan(ResolveFreeform2x2(_Selection, _Family, _Height));
+  return ExecutePlacementPlan(ResolveFreeform2x2(_Selection, _Family, _Height));
 }
 
 Integer GetMode() {
-    return G_Mode;
+  return G_Mode;
 }
 
 Boolean GetLastRollbackFailed() {
-    return G_LastRollbackFailed;
+  return G_LastRollbackFailed;
 }
 
 Boolean GetSelectionVisible() {
-    return G_SelectionVisible;
+  return G_SelectionVisible;
 }
 
 Int3[] GetCurrentSelection() {
-    return G_CurrentSelection;
+  return G_CurrentSelection;
 }
 
 SelectionChange[] GetSelectionChanged() {
-    declare SelectionChange[] Result;
-    foreach (Entry in G_SelectionChanged) {
-        Result.add(Entry);
-    }
-    G_SelectionChanged.clear();
-    return Result;
+  declare SelectionChange[] Result;
+  foreach (Entry in G_SelectionChanged) {
+    Result.add(Entry);
+  }
+  G_SelectionChanged.clear();
+  return Result;
 }
 
 SelectionChange[] GetSelectionConfirmed() {
-    declare SelectionChange[] Result;
-    foreach (Entry in G_SelectionConfirmed) {
-        Result.add(Entry);
-    }
-    G_SelectionConfirmed.clear();
-    return Result;
+  declare SelectionChange[] Result;
+  foreach (Entry in G_SelectionConfirmed) {
+    Result.add(Entry);
+  }
+  G_SelectionConfirmed.clear();
+  return Result;
 }
 
 ItemRemoval[] GetItemRemovals() {
-    declare ItemRemoval[] Result;
-    foreach (Entry in G_ItemRemovals) {
-        Result.add(Entry);
-    }
-    G_ItemRemovals.clear();
-    return Result;
+  declare ItemRemoval[] Result;
+  foreach (Entry in G_ItemRemovals) {
+    Result.add(Entry);
+  }
+  G_ItemRemovals.clear();
+  return Result;
 }
 

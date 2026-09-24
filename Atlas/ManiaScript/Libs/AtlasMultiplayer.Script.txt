@@ -1,21 +1,18 @@
 #Include "Libs/AtlasEngine.Script.txt" as Atlas
 #Include "TextLib" as TextLib
 
-#Struct Atlas::ItemBlock as ItemBlock
-#Struct Atlas::Placement as Placement
-
 #Struct ServerResponse {
-    Integer StatusCode;
-    Text Body;
-    Text OperationId;
+  Integer StatusCode;
+  Text Body;
+  Text OperationId;
 }
 
 #Struct IncomingEvent {
-    Integer Sequence;
-    Text OperationId;
-    Text AuthorClientId;
-    Text Kind;
-    Text Body;
+  Integer Sequence;
+  Text OperationId;
+  Text AuthorClientId;
+  Text Kind;
+  Text Body;
 }
 
 declare Text G_ServerUrl;
@@ -37,297 +34,297 @@ declare ServerResponse[] G_Errors;
 declare IncomingEvent[] G_Events;
 
 Text[] SplitEvents(Text _Json) {
-    declare Text[] Result;
-    declare Marker = -1;
-    declare I = 0;
-    while (I + 8 <= TextLib::Length(_Json)) {
-        if (TextLib::SubString(_Json, I, 8) == "\"events\"") {
-            Marker = I + 8;
-            break;
-        }
-        I += 1;
+  declare Text[] Result;
+  declare Marker = -1;
+  declare I = 0;
+  while (I + 8 <= TextLib::Length(_Json)) {
+    if (TextLib::SubString(_Json, I, 8) == "\"events\"") {
+      Marker = I + 8;
+      break;
     }
-    if (Marker < 0) {
-        return Result;
-    }
-    declare ArrayStart = -1;
-    for (I, Marker, TextLib::Length(_Json) - 1) {
-        if (TextLib::SubString(_Json, I, 1) == "[") {
-            ArrayStart = I + 1;
-            break;
-        }
-    }
-    if (ArrayStart < 0) {
-        return Result;
-    }
-    declare Depth = 0;
-    declare ObjectStart = -1;
-    declare Quoted = False;
-    declare Escaped = False;
-    for (I, ArrayStart, TextLib::Length(_Json) - 1) {
-        declare Ch = TextLib::SubString(_Json, I, 1);
-        if (Quoted) {
-            if (Escaped) {
-                Escaped = False;
-            } else if (Ch == "\\") {
-                Escaped = True;
-            } else {
-                if (Ch == "\"") {
-                    Quoted = False;
-                }
-            }
-            continue;
-        }
-        if (Ch == "\"") {
-            Quoted = True;
-            continue;
-        }
-        if (Ch == "{") {
-            if (Depth == 0) {
-                ObjectStart = I;
-            }
-            Depth += 1;
-        } else if (Ch == "}") {
-            Depth -= 1;
-            if (Depth == 0 && ObjectStart >= 0) {
-                Result.add(TextLib::SubString(_Json, ObjectStart, I - ObjectStart + 1));
-                ObjectStart = -1;
-            }
-        } else {
-            if (Ch == "]" && Depth == 0) {
-                break;
-            }
-        }
-    }
+    I += 1;
+  }
+  if (Marker < 0) {
     return Result;
+  }
+  declare ArrayStart = -1;
+  for (I, Marker, TextLib::Length(_Json) - 1) {
+    if (TextLib::SubString(_Json, I, 1) == "[") {
+      ArrayStart = I + 1;
+      break;
+    }
+  }
+  if (ArrayStart < 0) {
+    return Result;
+  }
+  declare Depth = 0;
+  declare ObjectStart = -1;
+  declare Quoted = False;
+  declare Escaped = False;
+  for (I, ArrayStart, TextLib::Length(_Json) - 1) {
+    declare Ch = TextLib::SubString(_Json, I, 1);
+    if (Quoted) {
+      if (Escaped) {
+        Escaped = False;
+      } else if (Ch == "\\") {
+        Escaped = True;
+      } else {
+        if (Ch == "\"") {
+          Quoted = False;
+        }
+      }
+      continue;
+    }
+    if (Ch == "\"") {
+      Quoted = True;
+      continue;
+    }
+    if (Ch == "{") {
+      if (Depth == 0) {
+        ObjectStart = I;
+      }
+      Depth += 1;
+    } else if (Ch == "}") {
+      Depth -= 1;
+      if (Depth == 0 && ObjectStart >= 0) {
+        Result.add(TextLib::SubString(_Json, ObjectStart, I - ObjectStart + 1));
+        ObjectStart = -1;
+      }
+    } else {
+      if (Ch == "]" && Depth == 0) {
+        break;
+      }
+    }
+  }
+  return Result;
 }
 
 Void Configure(Text _BaseUrl, Text _Session) {
-    G_ServerUrl = _BaseUrl;
-    if (TextLib::EndsWith("/", G_ServerUrl)) {
-        G_ServerUrl = TextLib::SubString(G_ServerUrl, 0, TextLib::Length(G_ServerUrl) - 1);
-    }
-    G_SessionId = _Session;
+  G_ServerUrl = _BaseUrl;
+  if (TextLib::EndsWith("/", G_ServerUrl)) {
+    G_ServerUrl = TextLib::SubString(G_ServerUrl, 0, TextLib::Length(G_ServerUrl) - 1);
+  }
+  G_SessionId = _Session;
 }
 
 Text Private_SessionUrl() {
-    return G_ServerUrl ^ "/sessions/" ^ TextLib::URLEncode(G_SessionId);
+  return G_ServerUrl ^ "/sessions/" ^ TextLib::URLEncode(G_SessionId);
 }
 
 Text Private_EscapeJson(Text _Value) {
-    return TextLib::Replace(TextLib::Replace(TextLib::Replace(_Value, "\\", "\\\\"), "\"", "\\\""), "\n", "\\n");
+  return TextLib::Replace(TextLib::Replace(TextLib::Replace(_Value, "\\", "\\\\"), "\"", "\\\""), "\n", "\\n");
 }
 
 Text Private_JsonString(Text _Json, Text _Field) {
-    declare Match = TextLib::RegexMatch("\"" ^ _Field ^ "\"\\s*:\\s*\"([^\"]*)\"", _Json, "");
-    if (Match.count < 2) {
-        return "";
-    }
-    return Match[1];
+  declare Match = TextLib::RegexMatch("\"" ^ _Field ^ "\"\\s*:\\s*\"([^\"]*)\"", _Json, "");
+  if (Match.count < 2) {
+    return "";
+  }
+  return Match[1];
 }
 
 Integer Private_JsonInteger(Text _Json, Text _Field) {
-    declare Match = TextLib::RegexMatch("\"" ^ _Field ^ "\"\\s*:\\s*([0-9]+)", _Json, "");
-    if (Match.count < 2) {
-        return -1;
-    }
-    return TextLib::ToInteger(Match[1]);
+  declare Match = TextLib::RegexMatch("\"" ^ _Field ^ "\"\\s*:\\s*([0-9]+)", _Json, "");
+  if (Match.count < 2) {
+    return -1;
+  }
+  return TextLib::ToInteger(Match[1]);
 }
 
 Boolean GetIsJoined() {
-    return G_ClientId != "";
+  return G_ClientId != "";
 }
 
 Boolean Join(Text _DisplayName) {
-    if (G_ServerUrl == "" || G_SessionId == "" || G_JoinRequest != Null || GetIsJoined() || Http.SlotsAvailable < 1) {
-        return False;
-    }
-    declare Body = "{\"displayName\":\"" ^ Private_EscapeJson(_DisplayName) ^ "\"}";
-    G_JoinRequest = Http.CreatePost(Private_SessionUrl() ^ "/join", Body, "Content-Type: application/json");
-    return G_JoinRequest != Null;
+  if (G_ServerUrl == "" || G_SessionId == "" || G_JoinRequest != Null || GetIsJoined() || Http.SlotsAvailable < 1) {
+    return False;
+  }
+  declare Body = "{\"displayName\":\"" ^ Private_EscapeJson(_DisplayName) ^ "\"}";
+  G_JoinRequest = Http.CreatePost(Private_SessionUrl() ^ "/join", Body, "Content-Type: application/json");
+  return G_JoinRequest != Null;
 }
 
 Boolean SubmitIntent(Text _OperationId, Text _Kind, Text _PayloadJson) {
-    if (!GetIsJoined() || G_AwaitingApply || G_AwaitingSnapshot || _OperationId == "" || _Kind == "" || G_PendingOperationId != "" || _PayloadJson == "" || Http.SlotsAvailable < 1) {
-        return False;
-    }
-    G_PendingOperationId = _OperationId;
-    G_PendingOperationBody = "{\"operationId\":\"" ^ Private_EscapeJson(_OperationId) ^ "\",\"clientId\":\"" ^ Private_EscapeJson(G_ClientId) ^ "\",\"baseRevision\":" ^ G_Revision ^ ",\"kind\":\"" ^ Private_EscapeJson(_Kind) ^ "\",\"payload\":" ^ _PayloadJson ^ "}";
-    G_OperationRequest = Http.CreatePost(Private_SessionUrl() ^ "/operations", G_PendingOperationBody, "Content-Type: application/json");
-    return G_OperationRequest != Null;
+  if (!GetIsJoined() || G_AwaitingApply || G_AwaitingSnapshot || _OperationId == "" || _Kind == "" || G_PendingOperationId != "" || _PayloadJson == "" || Http.SlotsAvailable < 1) {
+    return False;
+  }
+  G_PendingOperationId = _OperationId;
+  G_PendingOperationBody = "{\"operationId\":\"" ^ Private_EscapeJson(_OperationId) ^ "\",\"clientId\":\"" ^ Private_EscapeJson(G_ClientId) ^ "\",\"baseRevision\":" ^ G_Revision ^ ",\"kind\":\"" ^ Private_EscapeJson(_Kind) ^ "\",\"payload\":" ^ _PayloadJson ^ "}";
+  G_OperationRequest = Http.CreatePost(Private_SessionUrl() ^ "/operations", G_PendingOperationBody, "Content-Type: application/json");
+  return G_OperationRequest != Null;
 }
 
 Boolean RetryPendingOperation() {
-    if (G_PendingOperationId == "" || G_OperationRequest != Null || Http.SlotsAvailable < 1) {
-        return False;
-    }
-    G_OperationRequest = Http.CreatePost(Private_SessionUrl() ^ "/operations", G_PendingOperationBody, "Content-Type: application/json");
-    return G_OperationRequest != Null;
+  if (G_PendingOperationId == "" || G_OperationRequest != Null || Http.SlotsAvailable < 1) {
+    return False;
+  }
+  G_OperationRequest = Http.CreatePost(Private_SessionUrl() ^ "/operations", G_PendingOperationBody, "Content-Type: application/json");
+  return G_OperationRequest != Null;
 }
 
 Void Update() {
-    if (G_JoinRequest != Null && G_JoinRequest.IsCompleted) {
-        declare Status = G_JoinRequest.StatusCode;
-        declare Body = G_JoinRequest.Result;
-        Http.Destroy(G_JoinRequest);
-        G_JoinRequest = Null;
-        if (Status == 200) {
-            G_ClientId = Private_JsonString(Body, "clientId");
-            G_Revision = Private_JsonInteger(Body, "revision");
-            if (G_ClientId == "" || G_Revision < 0) {
-                G_ClientId = "";
-                G_Errors.add(ServerResponse { StatusCode = Status, Body = Body });
-            } else {
-                G_AwaitingSnapshot = True;
-                G_Batches.add(ServerResponse { StatusCode = Status, Body = Body });
-            }
-        } else {
-            G_Errors.add(ServerResponse { StatusCode = Status, Body = Body });
+  if (G_JoinRequest != Null && G_JoinRequest.IsCompleted) {
+    declare Status = G_JoinRequest.StatusCode;
+    declare Body = G_JoinRequest.Result;
+    Http.Destroy(G_JoinRequest);
+    G_JoinRequest = Null;
+    if (Status == 200) {
+      G_ClientId = Private_JsonString(Body, "clientId");
+      G_Revision = Private_JsonInteger(Body, "revision");
+      if (G_ClientId == "" || G_Revision < 0) {
+        G_ClientId = "";
+        G_Errors.add(ServerResponse { StatusCode = Status, Body = Body });
+      } else {
+        G_AwaitingSnapshot = True;
+        G_Batches.add(ServerResponse { StatusCode = Status, Body = Body });
+      }
+    } else {
+      G_Errors.add(ServerResponse { StatusCode = Status, Body = Body });
+    }
+  }
+  if (G_OperationRequest != Null && G_OperationRequest.IsCompleted) {
+    declare Status = G_OperationRequest.StatusCode;
+    declare Body = G_OperationRequest.Result;
+    Http.Destroy(G_OperationRequest);
+    G_OperationRequest = Null;
+    declare Response = ServerResponse { StatusCode = Status, Body = Body, OperationId = G_PendingOperationId };
+    if (Status == 202 || Status == 409 || Status == 422) {
+      G_Operations.add(Response);
+      G_PendingOperationId = "";
+      G_PendingOperationBody = "";
+    } else {
+      G_Errors.add(Response);
+    }
+  }
+  if (G_PollRequest != Null && G_PollRequest.IsCompleted) {
+    declare Status = G_PollRequest.StatusCode;
+    declare Body = G_PollRequest.Result;
+    Http.Destroy(G_PollRequest);
+    G_PollRequest = Null;
+    if (Status == 200) {
+      G_PendingRevision = Private_JsonInteger(Body, "revision");
+      if (G_PendingRevision < G_Revision) {
+        G_Errors.add(ServerResponse { StatusCode = Status, Body = Body });
+      } else {
+        declare Bodies = SplitEvents(Body);
+        declare Expected = G_Revision + 1;
+        declare Valid = True;
+        foreach (EventBody in Bodies) {
+          if (Private_JsonInteger(EventBody, "sequence") != Expected) {
+            Valid = False;
+          }
+          Expected += 1;
         }
-    }
-    if (G_OperationRequest != Null && G_OperationRequest.IsCompleted) {
-        declare Status = G_OperationRequest.StatusCode;
-        declare Body = G_OperationRequest.Result;
-        Http.Destroy(G_OperationRequest);
-        G_OperationRequest = Null;
-        declare Response = ServerResponse { StatusCode = Status, Body = Body, OperationId = G_PendingOperationId };
-        if (Status == 202 || Status == 409 || Status == 422) {
-            G_Operations.add(Response);
-            G_PendingOperationId = "";
-            G_PendingOperationBody = "";
-        } else {
-            G_Errors.add(Response);
+        if (!Valid || (Bodies.count == 0 && G_PendingRevision != G_Revision) || (Bodies.count > 0 && G_PendingRevision != Expected - 1)) {
+          G_Errors.add(ServerResponse { StatusCode = Status, Body = Body });
+        } else if (Bodies.count > 0) {
+          G_PendingEventCount = Bodies.count;
+          G_AwaitingApply = True;
+          foreach (EventBody in Bodies) {
+            G_Events.add(IncomingEvent { Sequence = Private_JsonInteger(EventBody, "sequence"), OperationId = Private_JsonString(EventBody, "operationId"), AuthorClientId = Private_JsonString(EventBody, "authorClientId"), Kind = Private_JsonString(EventBody, "kind"), Body = EventBody });
+          }
+          G_Batches.add(ServerResponse { StatusCode = Status, Body = Body });
         }
+      }
+    } else if (Status == 410) {
+      G_AwaitingSnapshot = True;
+      G_Batches.add(ServerResponse { StatusCode = Status, Body = Body });
+    } else {
+      G_Errors.add(ServerResponse { StatusCode = Status, Body = Body });
     }
-    if (G_PollRequest != Null && G_PollRequest.IsCompleted) {
-        declare Status = G_PollRequest.StatusCode;
-        declare Body = G_PollRequest.Result;
-        Http.Destroy(G_PollRequest);
-        G_PollRequest = Null;
-        if (Status == 200) {
-            G_PendingRevision = Private_JsonInteger(Body, "revision");
-            if (G_PendingRevision < G_Revision) {
-                G_Errors.add(ServerResponse { StatusCode = Status, Body = Body });
-            } else {
-                declare Bodies = SplitEvents(Body);
-                declare Expected = G_Revision + 1;
-                declare Valid = True;
-                foreach (EventBody in Bodies) {
-                    if (Private_JsonInteger(EventBody, "sequence") != Expected) {
-                        Valid = False;
-                    }
-                    Expected += 1;
-                }
-                if (!Valid || (Bodies.count == 0 && G_PendingRevision != G_Revision) || (Bodies.count > 0 && G_PendingRevision != Expected - 1)) {
-                    G_Errors.add(ServerResponse { StatusCode = Status, Body = Body });
-                } else if (Bodies.count > 0) {
-                    G_PendingEventCount = Bodies.count;
-                    G_AwaitingApply = True;
-                    foreach (EventBody in Bodies) {
-                        G_Events.add(IncomingEvent { Sequence = Private_JsonInteger(EventBody, "sequence"), OperationId = Private_JsonString(EventBody, "operationId"), AuthorClientId = Private_JsonString(EventBody, "authorClientId"), Kind = Private_JsonString(EventBody, "kind"), Body = EventBody });
-                    }
-                    G_Batches.add(ServerResponse { StatusCode = Status, Body = Body });
-                }
-            }
-        } else if (Status == 410) {
-            G_AwaitingSnapshot = True;
-            G_Batches.add(ServerResponse { StatusCode = Status, Body = Body });
-        } else {
-            G_Errors.add(ServerResponse { StatusCode = Status, Body = Body });
-        }
-    }
-    if (GetIsJoined() && !G_AwaitingApply && !G_AwaitingSnapshot && G_PollRequest == Null && Http.SlotsAvailable > 0) {
-        declare Url = Private_SessionUrl() ^ "/events?clientId=" ^ TextLib::URLEncode(G_ClientId) ^ "&after=" ^ G_Revision ^ "&waitSeconds=20";
-        G_PollRequest = Http.CreateGet(Url, False);
-    }
+  }
+  if (GetIsJoined() && !G_AwaitingApply && !G_AwaitingSnapshot && G_PollRequest == Null && Http.SlotsAvailable > 0) {
+    declare Url = Private_SessionUrl() ^ "/events?clientId=" ^ TextLib::URLEncode(G_ClientId) ^ "&after=" ^ G_Revision ^ "&waitSeconds=20";
+    G_PollRequest = Http.CreateGet(Url, False);
+  }
 }
 
 Boolean AcknowledgeApplied(Integer _Sequence) {
-    if (!G_AwaitingApply || _Sequence != G_Revision + 1 || _Sequence > G_PendingRevision) {
-        return False;
-    }
-    G_Revision = _Sequence;
-    G_PendingEventCount -= 1;
-    if (G_PendingEventCount == 0) {
-        G_AwaitingApply = False;
-    }
-    return True;
+  if (!G_AwaitingApply || _Sequence != G_Revision + 1 || _Sequence > G_PendingRevision) {
+    return False;
+  }
+  G_Revision = _Sequence;
+  G_PendingEventCount -= 1;
+  if (G_PendingEventCount == 0) {
+    G_AwaitingApply = False;
+  }
+  return True;
 }
 
-Boolean ApplyBatch(Integer _Sequence, ItemBlock[] _Removed, Placement[] _Placed, Int3[] _RemovedWater) {
-    if (!G_AwaitingApply || _Sequence != G_Revision + 1) {
-        return False;
-    }
-    if (!Atlas::ApplyResolvedChanges(_Removed, _Placed, _RemovedWater)) {
-        return False;
-    }
-    return AcknowledgeApplied(_Sequence);
+Boolean ApplyBatch(Integer _Sequence, Atlas::ItemBlock[] _Removed, Atlas::Placement[] _Placed, Int3[] _RemovedWater) {
+  if (!G_AwaitingApply || _Sequence != G_Revision + 1) {
+    return False;
+  }
+  if (!Atlas::ApplyResolvedChanges(_Removed, _Placed, _RemovedWater)) {
+    return False;
+  }
+  return AcknowledgeApplied(_Sequence);
 }
 
-Boolean ApplySnapshot(Integer _SnapshotRevision, ItemBlock[] _ItemBlocks, Int3[] _RemovedWater) {
-    if (!G_AwaitingSnapshot || _SnapshotRevision < 0) {
-        return False;
-    }
-    Atlas::SetItemBlockList(_ItemBlocks);
-    Atlas::SetRemovedWater(_RemovedWater);
-    G_Revision = _SnapshotRevision;
-    G_AwaitingSnapshot = False;
-    return True;
+Boolean ApplySnapshot(Integer _SnapshotRevision, Atlas::ItemBlock[] _ItemBlocks, Int3[] _RemovedWater) {
+  if (!G_AwaitingSnapshot || _SnapshotRevision < 0) {
+    return False;
+  }
+  Atlas::SetItemBlockList(_ItemBlocks);
+  Atlas::SetRemovedWater(_RemovedWater);
+  G_Revision = _SnapshotRevision;
+  G_AwaitingSnapshot = False;
+  return True;
 }
 
 Text GetClientId() {
-    return G_ClientId;
+  return G_ClientId;
 }
 
 Integer GetRevision() {
-    return G_Revision;
+  return G_Revision;
 }
 
 Boolean GetAwaitingApply() {
-    return G_AwaitingApply;
+  return G_AwaitingApply;
 }
 
 Boolean GetAwaitingSnapshot() {
-    return G_AwaitingSnapshot;
+  return G_AwaitingSnapshot;
 }
 
 Text GetPendingOperationId() {
-    return G_PendingOperationId;
+  return G_PendingOperationId;
 }
 
 ServerResponse[] GetBatches() {
-    declare ServerResponse[] Result;
-    foreach (Entry in G_Batches) {
-        Result.add(Entry);
-    }
-    G_Batches.clear();
-    return Result;
+  declare ServerResponse[] Result;
+  foreach (Entry in G_Batches) {
+    Result.add(Entry);
+  }
+  G_Batches.clear();
+  return Result;
 }
 
 ServerResponse[] GetOperationResponses() {
-    declare ServerResponse[] Result;
-    foreach (Entry in G_Operations) {
-        Result.add(Entry);
-    }
-    G_Operations.clear();
-    return Result;
+  declare ServerResponse[] Result;
+  foreach (Entry in G_Operations) {
+    Result.add(Entry);
+  }
+  G_Operations.clear();
+  return Result;
 }
 
 ServerResponse[] GetErrors() {
-    declare ServerResponse[] Result;
-    foreach (Entry in G_Errors) {
-        Result.add(Entry);
-    }
-    G_Errors.clear();
-    return Result;
+  declare ServerResponse[] Result;
+  foreach (Entry in G_Errors) {
+    Result.add(Entry);
+  }
+  G_Errors.clear();
+  return Result;
 }
 
 IncomingEvent[] GetEvents() {
-    declare IncomingEvent[] Result;
-    foreach (Entry in G_Events) {
-        Result.add(Entry);
-    }
-    G_Events.clear();
-    return Result;
+  declare IncomingEvent[] Result;
+  foreach (Entry in G_Events) {
+    Result.add(Entry);
+  }
+  G_Events.clear();
+  return Result;
 }
 
