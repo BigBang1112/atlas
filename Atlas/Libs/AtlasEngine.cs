@@ -631,7 +631,11 @@ public class AtlasEngine : CMapEditorPlugin, ILib
                         new Int3(coord.X - 1, coord.Y, coord.Z - 1),
                         new Int3(coord.X - 1, coord.Y, coord.Z + 1),
                         new Int3(coord.X + 1, coord.Y, coord.Z - 1),
-                        new Int3(coord.X + 1, coord.Y, coord.Z + 1)
+                        new Int3(coord.X + 1, coord.Y, coord.Z + 1),
+                        new Int3(coord.X - 2, coord.Y, coord.Z - 2),
+                        new Int3(coord.X - 2, coord.Y, coord.Z + 2),
+                        new Int3(coord.X + 2, coord.Y, coord.Z - 2),
+                        new Int3(coord.X + 2, coord.Y, coord.Z + 2)
                     };
                     foreach (var neighbor in neighbors)
                     {
