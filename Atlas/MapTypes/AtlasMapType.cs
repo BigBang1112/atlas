@@ -11,15 +11,16 @@ public class AtlasMapType : CMapType, IContext
         // These example names are for Lagoon. Water modes require valid block names.
         atlas.SetRemoveWaterBlockMapping(new Dictionary<string, string>
         {
-            ["Grass"] = "LagoonGrassVoid",
+            ["LagoonVoid"] = "Beach",
+            ["Land"] = "LagoonGrassVoid",
             ["Beach"] = "LagoonBeachVoid"
         });
         atlas.SetRestoreWaterBlockMapping(
             new List<string> { "LagoonGrassVoid", "LagoonBeachVoid" }, "LagoonVoid");
 
         atlas.Initialize();
-        atlas.SetSelectionMode(AtlasEngine.SelectionMode.Box3D);
-        Log("Atlas example ready: drag on the ground to select cells.");
+        atlas.SetSelectionMode(AtlasEngine.SelectionMode.RemoveWater);
+        Log("Atlas example ready: click to select a tower footprint.");
     }
 
     public void Loop()

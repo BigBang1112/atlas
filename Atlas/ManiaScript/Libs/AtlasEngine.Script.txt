@@ -68,7 +68,6 @@ declare Vec3[] G_PreviousItems;
 declare Text[Text] G_RemoveWaterMapping;
 declare Text[] G_RestoreWaterVoidNames;
 declare Text G_WaterVoidName;
-declare Text G_FlatTerrainName;
 declare Text[][][][Text] G_ItemBlockGroups;
 declare Integer[Integer][Text] G_CubePieceMapping;
 
@@ -222,10 +221,6 @@ Void SetRestoreWaterBlockMapping(Text[] _VoidNames, Text _WaterVoid) {
   G_WaterVoidName = _WaterVoid;
 }
 
-Void SetFlatTerrainBlockName(Text _Name) {
-  G_FlatTerrainName = _Name;
-}
-
 Void SetTowerSelectionSize(Integer _Width, Integer _Depth) {
   declare NextWidth = MathLib::Max(1, _Width);
   declare NextDepth = MathLib::Max(1, _Depth);
@@ -275,6 +270,14 @@ Void SetCurrentSelection(Int3[] _Coords, Boolean _Visible) {
   Private_DrawSelection();
 }
 
+Int3[] Private_GetWaterSelectionCoords(Int3[] _Coords) {
+  declare Int3[] Result;
+  foreach (Coord in _Coords) {
+    Result.add(<Coord.X, CollectionGroundY, Coord.Z>);
+  }
+  return Result;
+}
+
 Void ClearSelection() {
   G_CurrentSelection.clear();
   G_SelectionVisible = False;
@@ -288,7 +291,10 @@ Void SetSelectionMode(Integer _NextMode) {
   }
   G_Mode = _NextMode;
   G_Dragging = False;
-  if (_NextMode == C_SelectionMode_RemoveWater || _NextMode == C_SelectionMode_RestoreWater) {
+  if (_NextMode == C_SelectionMode_RemoveWater) {
+    SetCurrentSelection(Private_GetWaterSelectionCoords(GetRemovedWater()), True);
+    CustomSelectionRGB = <0.55, 0.30, 0.10>;
+  } else if (_NextMode == C_SelectionMode_RestoreWater) {
     SetCurrentSelection(GetRemovedWater(), True);
     CustomSelectionRGB = <0.55, 0.30, 0.10>;
   } else {
@@ -410,6 +416,8 @@ Int3[] BuildSelection(Int3 _Start, Int3 _End, Integer _SelectionMode) {
         declare Y = GetRealGroundHeight(X, Z);
         if (_SelectionMode == C_SelectionMode_Ground2D) {
           Y = GetFakeGroundHeight(X, Z);
+        } else if (_SelectionMode == C_SelectionMode_RemoveWater || _SelectionMode == C_SelectionMode_RestoreWater) {
+          Y = CollectionGroundY;
         }
         Result.add(<X, Y, Z>);
       } else if (_SelectionMode == C_SelectionMode_Plane2D) {
@@ -453,167 +461,147 @@ Void Private_DrawPreview(Int3[] _Coords) {
   ShowCustomSelection();
 }
 
-Void Private_RollbackRemovedWater(Placement[] _Planned, Placement[] _Placed, Int3 _First, Int3 _Last) {
-  foreach (Entry in _Placed) {
-    if (!RemoveBlock(Entry.Coord)) {
-      G_LastRollbackFailed = True;
-    }
-  }
-  if (!RemoveTerrainBlocks(_First, _Last)) {
-    G_LastRollbackFailed = True;
-  }
-  foreach (Entry in _Planned) {
-    declare Original = GetBlockModelFromName(Entry.Family);
-    if (Entry.Ground) {
-      Original = GetTerrainBlockModelFromName(Entry.Family);
-    }
-    if (Original == Null) {
-      G_LastRollbackFailed = True;
-      continue;
-    }
-    if (Entry.Ground) {
-      if (!PlaceTerrainBlocks(Original, Entry.Coord, Entry.Coord)) {
-        G_LastRollbackFailed = True;
-      }
-    } else if (!PlaceBlock(Original, Entry.Coord, Entry.Direction)) {
-      G_LastRollbackFailed = True;
-    }
-  }
-}
-
-Boolean RemoveWater(Int3[] _Coords) {
+Boolean RemoveWater(Int3 _Start, Int3 _End) {
   G_LastRollbackFailed = False;
-  if (_Coords.count == 0 || TerrainBlockModels.count == 0) {
+  log("RemoveWater requested: from (" ^ _Start.X ^ ", " ^ _Start.Y ^ ", " ^ _Start.Z ^ ") to (" ^ _End.X ^ ", " ^ _End.Y ^ ", " ^ _End.Z ^ ").");
+  if (TerrainBlockModels.count == 0) {
+    log("RemoveWater failed: no terrain block models are available.");
     return False;
   }
   declare Terrain = TerrainBlockModels[0];
-  if (G_FlatTerrainName != "") {
-    Terrain = GetTerrainBlockModelFromName(G_FlatTerrainName);
+  declare MinX = MathLib::Min(_Start.X, _End.X);
+  declare MaxX = MathLib::Max(_Start.X, _End.X);
+  declare MinZ = MathLib::Min(_Start.Z, _End.Z);
+  declare MaxZ = MathLib::Max(_Start.Z, _End.Z);
+  declare Int3[] OriginalGroundCoords;
+  for (X, MinX, MaxX) {
+    for (Z, MinZ, MaxZ) {
+      OriginalGroundCoords.add(<X, GetRealGroundHeight(X, Z), Z>);
+    }
   }
-  if (Terrain == Null) {
+  if (!PlaceTerrainBlocks(Terrain, _Start, _End)) {
+    log("RemoveWater failed: could not place " ^ Terrain.Name ^ " from " ^ _Start ^ " to " ^ _End ^ ".");
     return False;
   }
-  declare Placement[] Planned;
-  foreach (Requested in _Coords) {
-    declare Coord = <Requested.X, GetRealGroundHeight(Requested.X, Requested.Z), Requested.Z>;
-    declare Duplicate = False;
-    foreach (Entry in Planned) {
-      if (Private_SameCoord(Entry.Coord, Coord)) {
-        Duplicate = True;
-      }
-    }
-    if (Duplicate) {
+  declare Succeeded = True;
+  declare metadata Int3[] Atlas_RemovedWater as StoredWater for Map;
+  foreach (OriginalCoord in OriginalGroundCoords) {
+    declare Coord = <OriginalCoord.X, GetRealGroundHeight(OriginalCoord.X, OriginalCoord.Z), OriginalCoord.Z>;
+    declare Old = GetBlock(Coord);
+    if (Old == Null) {
+      log("RemoveWater failed: no block at (" ^ Coord.X ^ ", " ^ Coord.Y ^ ", " ^ Coord.Z ^ ").");
+      Succeeded = False;
       continue;
     }
-    declare Old = GetBlock(Coord);
-    if (Old == Null || !G_RemoveWaterMapping.existskey(Old.BlockModel.Name)) {
-      return False;
+    if (!G_RemoveWaterMapping.existskey(Old.BlockModel.Name)) {
+      log("RemoveWater failed: block '" ^ Old.BlockModel.Name ^ "' at (" ^ Coord.X ^ ", " ^ Coord.Y ^ ", " ^ Coord.Z ^ ") has no void mapping.");
+      Succeeded = False;
+      continue;
     }
     declare VoidName = G_RemoveWaterMapping[Old.BlockModel.Name];
-    if (GetBlockModelFromName(VoidName) == Null) {
-      return False;
+    declare VoidBlock = GetBlockModelFromName(VoidName);
+    if (VoidBlock == Null) {
+      log("RemoveWater failed: mapped void block '" ^ VoidName ^ "' was not found.");
+      Succeeded = False;
+      continue;
     }
-    Planned.add(Placement { Coord = Coord, MacroblockName = VoidName, Family = Old.BlockModel.Name, Direction = Old.Dir, Ground = Old.BlockModel.IsTerrain });
-  }
-  declare First = Planned[0].Coord;
-  declare Last = First;
-  foreach (Entry in Planned) {
-    First = <MathLib::Min(First.X, Entry.Coord.X), First.Y, MathLib::Min(First.Z, Entry.Coord.Z)>;
-    Last = <MathLib::Max(Last.X, Entry.Coord.X), Last.Y, MathLib::Max(Last.Z, Entry.Coord.Z)>;
-  }
-  if (!CanPlaceTerrainBlocks(Terrain, First, Last) || !PlaceTerrainBlocks(Terrain, First, Last)) {
-    return False;
-  }
-  declare metadata Int3[] Atlas_RemovedWater as StoredWater for Map;
-  declare Placement[] Placed;
-  foreach (Entry in Planned) {
-    declare BlockModel = GetBlockModelFromName(Entry.MacroblockName);
-    if (!PlaceBlock(BlockModel, Entry.Coord, CMapEditorPlugin::CardinalDirections::North)) {
-      Private_RollbackRemovedWater(Planned, Placed, First, Last);
-      return False;
+    if (!PlaceBlock(VoidBlock, Coord, CMapEditorPlugin::CardinalDirections::North)) {
+      log("RemoveWater failed: could not place void block '" ^ VoidName ^ "' at (" ^ Coord.X ^ ", " ^ Coord.Y ^ ", " ^ Coord.Z ^ ").");
+      Succeeded = False;
+      continue;
     }
-    Placed.add(Entry);
-  }
-  foreach (Entry in Planned) {
-    if (!StoredWater/* not Null here */.exists(Entry.Coord)) {
-      StoredWater.add(Entry.Coord);
+    if (!StoredWater/* not Null here */.exists(OriginalCoord)) {
+      StoredWater.add(OriginalCoord);
     }
   }
-  SetCurrentSelection(StoredWater/* not Null here */, True);
+  SetCurrentSelection(Private_GetWaterSelectionCoords(StoredWater/* not Null here */), True);
   CustomSelectionRGB = <0.55, 0.30, 0.10>;
-  return True;
+  return Succeeded;
 }
 
-Void Private_RollbackRestoredWater(Placement[] _Restored) {
-  declare CBlockModel Terrain = Null;
-  if (TerrainBlockModels.count > 0) {
-    Terrain = TerrainBlockModels[0];
-  }
-  if (G_FlatTerrainName != "") {
-    Terrain = GetTerrainBlockModelFromName(G_FlatTerrainName);
-  }
-  foreach (Entry in _Restored) {
-    if (!RemoveBlock(Entry.Coord)) {
-      G_LastRollbackFailed = True;
-    }
-    if (Terrain != Null) {
-      if (!PlaceTerrainBlocks(Terrain, Entry.Coord, Entry.Coord)) {
-        G_LastRollbackFailed = True;
-      }
-    } else {
-      G_LastRollbackFailed = True;
-    }
-    declare OldVoid = GetBlockModelFromName(Entry.MacroblockName);
-    if (OldVoid != Null) {
-      if (!PlaceBlock(OldVoid, Entry.Coord, Entry.Direction)) {
-        G_LastRollbackFailed = True;
-      }
-    } else {
-      G_LastRollbackFailed = True;
-    }
-  }
-}
-
-Boolean RestoreWater(Int3[] _Coords) {
+Boolean RestoreWater(Int3 _Start, Int3 _End) {
   G_LastRollbackFailed = False;
   declare Water = GetBlockModelFromName(G_WaterVoidName);
   if (Water == Null) {
+    log("RestoreWater failed: water block '" ^ G_WaterVoidName ^ "' was not found.");
     return False;
   }
   declare metadata Int3[] Atlas_RemovedWater as StoredWater for Map;
-  declare Int3[] Targets;
-  declare Placement[] Originals;
-  foreach (Requested in _Coords) {
-    foreach (Coord in StoredWater/* not Null here */) {
-      if (Coord.X != Requested.X || Coord.Z != Requested.Z || Targets.exists(Coord)) {
+  declare Succeeded = True;
+  declare Int3[] AvailableVoidCoords;
+  declare Int3[] SelectionCoords;
+  declare MinX = MathLib::Min(_Start.X, _End.X);
+  declare MaxX = MathLib::Max(_Start.X, _End.X);
+  declare MinZ = MathLib::Min(_Start.Z, _End.Z);
+  declare MaxZ = MathLib::Max(_Start.Z, _End.Z);
+  for (X, MinX, MaxX) {
+    for (Z, MinZ, MaxZ) {
+      SelectionCoords.add(<X, CollectionGroundY, Z>);
+    }
+  }
+  foreach (Block in Blocks) {
+    if (Block == Null) {
+      continue;
+    }
+    if (G_RestoreWaterVoidNames.exists(Block.BlockModel.Name) && !AvailableVoidCoords.exists(Block.Coord)) {
+      AvailableVoidCoords.add(Block.Coord);
+    }
+  }
+  foreach (GroundCoord in SelectionCoords) {
+    declare VoidCoord = GroundCoord;
+    if (!AvailableVoidCoords.exists(VoidCoord)) {
+      VoidCoord = <GroundCoord.X, CollectionGroundY + 1, GroundCoord.Z>;
+    }
+    if (!AvailableVoidCoords.exists(VoidCoord)) {
+      continue;
+    }
+    if (!RemoveBlock(VoidCoord)) {
+      log("RestoreWater failed: could not remove configured void block at " ^ VoidCoord ^ ".");
+      Succeeded = False;
+    }
+  }
+  declare TerrainRemoved = RemoveTerrainBlocks(_Start, _End);
+  if (!TerrainRemoved) {
+    log("RestoreWater failed: could not remove terrain from " ^ _Start ^ " to " ^ _End ^ ".");
+    Succeeded = False;
+  }
+  if (TerrainRemoved) {
+    foreach (GroundCoord in SelectionCoords) {
+      if (!PlaceBlock(Water, GroundCoord, CMapEditorPlugin::CardinalDirections::North)) {
+        log("RestoreWater failed: could not place water at " ^ GroundCoord ^ ".");
+        Succeeded = False;
         continue;
       }
-      declare Block = GetBlock(Coord);
-      if (Block != Null && G_RestoreWaterVoidNames.exists(Block.BlockModel.Name)) {
-        Targets.add(Coord);
-        Originals.add(Placement { Coord = Coord, MacroblockName = Block.BlockModel.Name, Direction = Block.Dir });
+      declare Int3[] RemovedMetadata;
+      foreach (StoredCoord in StoredWater/* not Null here */) {
+        if (StoredCoord.X == GroundCoord.X && StoredCoord.Z == GroundCoord.Z) {
+          RemovedMetadata.add(StoredCoord);
+        }
+      }
+      foreach (StoredCoord in RemovedMetadata) {
+        StoredWater.remove(StoredCoord);
       }
     }
-  }
-  declare Placement[] Restored;
-  for (I, 0, Targets.count - 1) {
-    declare Coord = Targets[I];
-    if (!RemoveBlock(Coord)) {
-      Private_RollbackRestoredWater(Restored);
-      return False;
+    if (G_RemoveWaterMapping.existskey("Beach")) {
+      declare BeachVoidName = G_RemoveWaterMapping["Beach"];
+      declare BeachVoid = GetBlockModelFromName(BeachVoidName);
+      if (BeachVoid != Null) {
+        for (X, MinX - 1, MaxX + 1) {
+          for (Z, MinZ - 1, MaxZ + 1) {
+            declare InsideSelection = X >= MinX && X <= MaxX && Z >= MinZ && Z <= MaxZ;
+            declare InnerEdge = InsideSelection && (X == MinX || X == MaxX || Z == MinZ || Z == MaxZ);
+            if (InsideSelection && !InnerEdge) {
+              continue;
+            }
+            PlaceBlock(BeachVoid, <X, CollectionGroundY, Z>, CMapEditorPlugin::CardinalDirections::North);
+          }
+        }
+      }
     }
-    Restored.add(Originals[I]);
-    if (!RemoveTerrainBlocks(Coord, Coord) || !PlaceBlock(Water, Coord, CMapEditorPlugin::CardinalDirections::North)) {
-      Private_RollbackRestoredWater(Restored);
-      return False;
-    }
-  }
-  foreach (Coord in Targets) {
-    StoredWater/* not Null here */.remove(Coord);
   }
   SetCurrentSelection(StoredWater/* not Null here */, True);
   CustomSelectionRGB = <0.55, 0.30, 0.10>;
-  return True;
+  return Succeeded;
 }
 
 Void Update() {
@@ -626,6 +614,17 @@ Void Update() {
   declare CursorCoord = Cursor.Coord;
   if (G_Mode == C_SelectionMode_Ground2D || G_Mode == C_SelectionMode_RemoveWater || G_Mode == C_SelectionMode_RestoreWater) {
     CursorCoord = GetMouseCoordOnGround();
+    if (G_Mode == C_SelectionMode_RestoreWater) {
+      CursorCoord = <CursorCoord.X, CollectionGroundY, CursorCoord.Z>;
+    }
+  }
+  declare DisplayCursorCoord = CursorCoord;
+  if (G_Mode == C_SelectionMode_RemoveWater) {
+    DisplayCursorCoord = <CursorCoord.X, CollectionGroundY, CursorCoord.Z>;
+  }
+  Cursor.Coord = DisplayCursorCoord;
+  if (G_Mode != C_SelectionMode_None) {
+    PlaceMode = CMapEditorPlugin::PlaceMode::CustomSelection;
   }
   if (G_Mode == C_SelectionMode_Tower) {
     declare TowerEnd = <CursorCoord.X + MathLib::Max(1, G_TowerWidth) - 1, CursorCoord.Y, CursorCoord.Z + MathLib::Max(1, G_TowerDepth) - 1>;
@@ -657,9 +656,9 @@ Void Update() {
     } else {
       G_SelectionConfirmed.add(Change);
       if (G_Mode == C_SelectionMode_RemoveWater) {
-        RemoveWater(Coords);
+        RemoveWater(G_DragStart, CursorCoord);
       } else if (G_Mode == C_SelectionMode_RestoreWater) {
-        RestoreWater(Coords);
+        RestoreWater(G_DragStart, CursorCoord);
       } else {
         SetCurrentSelection(Coords, True);
       }

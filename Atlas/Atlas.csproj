@@ -11,12 +11,12 @@
     </ItemGroup>
 
     <ItemGroup>
-        <PackageReference Include="ManiaScriptSharp" Version="1.0.0-beta.1" />
-        <PackageReference Include="ManiaScriptSharp.Generator" Version="1.0.0-beta.2" OutputItemType="Analyzer" ReferenceOutputAssembly="false">
+        <PackageReference Include="ManiaScriptSharp" Version="1.0.0-beta.3" />
+        <PackageReference Include="ManiaScriptSharp.Generator" Version="1.0.0-beta.3" OutputItemType="Analyzer" ReferenceOutputAssembly="false">
             <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
             <PrivateAssets>all</PrivateAssets>
         </PackageReference>
-        <PackageReference Include="ManiaScriptSharp.ManiaPlanet" Version="1.0.0-beta.1" />
+        <PackageReference Include="ManiaScriptSharp.ManiaPlanet" Version="1.0.0-beta.3" />
     </ItemGroup>
 
 </Project>

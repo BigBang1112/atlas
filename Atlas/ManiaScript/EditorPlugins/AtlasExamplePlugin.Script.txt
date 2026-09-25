@@ -23,12 +23,13 @@ main() {
   while (True) {
     yield;
     Atlas::Update();
-    foreach (Change in Atlas::GetSelectionChanged()) {
-      log("Selection preview: " ^ Change.Coords.count ^ " cells");
+    foreach (Change in at) {
+      foreach (Change in Atlas::GetSelectionChanged()) {
+        log("Selection preview: " ^ Change.Coords.count ^ " cells");
+      }
     }
-    foreach (Change in Atlas::GetSelectionConfirmed()) {
-      log("Selection confirmed: " ^ Change.Coords.count ^ " cells");
-    }
+    SelectionConfirmed;
+    log("Selection confirmed: " ^ change.Coords.Count ^ " cells");
     foreach (Removal in Atlas::GetItemRemovals()) {
       log("Item removed at " ^ Removal.Position);
     }

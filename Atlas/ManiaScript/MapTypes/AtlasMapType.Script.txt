@@ -2,11 +2,11 @@
 
 #Include "Libs/AtlasEngine.Script.txt" as Atlas
 
-Atlas::SetRemoveWaterBlockMapping(["Grass" => "LagoonGrassVoid", "Beach" => "LagoonBeachVoid"]);
+Atlas::SetRemoveWaterBlockMapping(["LagoonVoid" => "Beach", "Land" => "LagoonGrassVoid", "Beach" => "LagoonBeachVoid"]);
 Atlas::SetRestoreWaterBlockMapping(["LagoonGrassVoid", "LagoonBeachVoid"], "LagoonVoid");
 Atlas::Initialize();
-Atlas::SetSelectionMode(Atlas::C_SelectionMode_Box3D);
-log("Atlas example ready: drag on the ground to select cells.");
+Atlas::SetSelectionMode(Atlas::C_SelectionMode_RemoveWater);
+log("Atlas example ready: click to select a tower footprint.");
 while (True) {
   yield;
   Atlas::Update();

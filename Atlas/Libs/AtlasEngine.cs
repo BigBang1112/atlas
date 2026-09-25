@@ -81,7 +81,6 @@ public class AtlasEngine : CMapEditorPlugin, ILib
     private readonly Dictionary<string, string> removeWaterMapping = [];
     private readonly List<string> restoreWaterVoidNames = [];
     private string waterVoidName = "";
-    private string flatTerrainName = "";
     private readonly Dictionary<string, List<List<List<string>>>> itemBlockGroups = [];
     private readonly Dictionary<string, Dictionary<int, int>> cubePieceMapping = [];
 
@@ -247,7 +246,6 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         waterVoidName = waterVoid;
     }
 
-    public void SetFlatTerrainBlockName(string name) => flatTerrainName = name;
     public void SetTowerSelectionSize(int width, int depth)
     {
         var nextWidth = Math.Max(1, width);
@@ -275,12 +273,24 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         if (mode != nextMode) ResetSelectionChangeTracking();
         mode = nextMode;
         dragging = false;
-        if (nextMode == SelectionMode.RemoveWater || nextMode == SelectionMode.RestoreWater)
+        if (nextMode == SelectionMode.RemoveWater)
+        {
+            SetCurrentSelection(GetWaterSelectionCoords(GetRemovedWater()), true);
+            CustomSelectionRGB = new Vec3(0.55f, 0.30f, 0.10f);
+        }
+        else if (nextMode == SelectionMode.RestoreWater)
         {
             SetCurrentSelection(GetRemovedWater(), true);
             CustomSelectionRGB = new Vec3(0.55f, 0.30f, 0.10f);
         }
         else ClearSelection();
+    }
+
+    private List<Int3> GetWaterSelectionCoords(IList<Int3> coords)
+    {
+        var result = new List<Int3>();
+        foreach (var coord in coords) result.Add(new Int3(coord.X, CollectionGroundY, coord.Z));
+        return result;
     }
 
     public void SetCurrentSelection(IList<Int3> coords, bool visible)
@@ -323,7 +333,25 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         if (mode == SelectionMode.None) { previousMouseDown = pressed; return; }
         var cursorCoord = Cursor.Coord;
         if (mode == SelectionMode.Ground2D || mode == SelectionMode.RemoveWater || mode == SelectionMode.RestoreWater)
+        {
             cursorCoord = GetMouseCoordOnGround();
+            if (mode == SelectionMode.RestoreWater)
+                cursorCoord = new Int3(cursorCoord.X, CollectionGroundY, cursorCoord.Z);
+        }
+
+        // Keep the editor cursor on the same grid position used to build the preview.
+        // Ground-based modes resolve their placement from the mouse ray rather than
+        // the cursor's previous height, so without this the cursor and selection drift.
+        var displayCursorCoord = cursorCoord;
+        if (mode == SelectionMode.RemoveWater)
+            displayCursorCoord = new Int3(cursorCoord.X, CollectionGroundY, cursorCoord.Z);
+        Cursor.Coord = displayCursorCoord;
+
+        if (mode != SelectionMode.None)
+        {
+            PlaceMode = EPlaceMode.CustomSelection;
+        }
+
         if (mode == SelectionMode.Tower)
         {
             var towerEnd = new Int3(cursorCoord.X + Math.Max(1, towerWidth) - 1, cursorCoord.Y,
@@ -358,8 +386,8 @@ public class AtlasEngine : CMapEditorPlugin, ILib
             else
             {
                 selectionConfirmed.Add(change);
-                if (mode == SelectionMode.RemoveWater) RemoveWater(coords);
-                else if (mode == SelectionMode.RestoreWater) RestoreWater(coords);
+                if (mode == SelectionMode.RemoveWater) RemoveWater(dragStart, cursorCoord);
+                else if (mode == SelectionMode.RestoreWater) RestoreWater(dragStart, cursorCoord);
                 else SetCurrentSelection(coords, true);
                 dragging = false;
             }
@@ -424,6 +452,8 @@ public class AtlasEngine : CMapEditorPlugin, ILib
             {
                 var y = GetRealGroundHeight(x, z);
                 if (selectionMode == SelectionMode.Ground2D) y = GetFakeGroundHeight(x, z);
+                else if (selectionMode == SelectionMode.RemoveWater || selectionMode == SelectionMode.RestoreWater)
+                    y = CollectionGroundY;
                 result.Add(new Int3(x, y, z));
             }
             else if (selectionMode == SelectionMode.Plane2D) result.Add(new Int3(x, start.Y, z));
@@ -448,137 +478,163 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         return result;
     }
 
-    public bool RemoveWater(IList<Int3> coords)
+    public bool RemoveWater(Int3 start, Int3 end)
     {
         lastRollbackFailed = false;
-        if (coords.Count == 0 || TerrainBlockModels.Count == 0) return false;
+        Log($"RemoveWater requested: from ({start.X}, {start.Y}, {start.Z}) to ({end.X}, {end.Y}, {end.Z}).");
+        if (TerrainBlockModels.Count == 0)
+        {
+            Log("RemoveWater failed: no terrain block models are available.");
+            return false;
+        }
+
         var terrain = TerrainBlockModels[0];
-        if (flatTerrainName != "") terrain = GetTerrainBlockModelFromName(flatTerrainName);
-        if (terrain == null) return false;
-        var planned = new List<Placement>();
-        foreach (var requested in coords)
+        var minX = Math.Min(start.X, end.X);
+        var maxX = Math.Max(start.X, end.X);
+        var minZ = Math.Min(start.Z, end.Z);
+        var maxZ = Math.Max(start.Z, end.Z);
+        var originalGroundCoords = new List<Int3>();
+        for (var x = minX; x <= maxX; x++)
+        for (var z = minZ; z <= maxZ; z++)
+            originalGroundCoords.Add(new Int3(x, GetRealGroundHeight(x, z), z));
+
+        if (!PlaceTerrainBlocks(terrain, start, end))
         {
-            var coord = new Int3(requested.X, GetRealGroundHeight(requested.X, requested.Z), requested.Z);
-            var duplicate = false;
-            foreach (var entry in planned) if (SameCoord(entry.Coord, coord)) duplicate = true;
-            if (duplicate) continue;
-            var old = GetBlock(coord);
-            if (old == null || !removeWaterMapping.ContainsKey(old.BlockModel.Name)) return false;
-            var voidName = removeWaterMapping[old.BlockModel.Name];
-            if (GetBlockModelFromName(voidName) == null) return false;
-            planned.Add(new Placement { Coord = coord, MacroblockName = voidName,
-                Family = old.BlockModel.Name, Direction = old.Dir, Ground = old.BlockModel.IsTerrain });
+            Log($"RemoveWater failed: could not place {terrain.Name} from {start} to {end}.");
+            return false;
         }
-        var first = planned[0].Coord;
-        var last = first;
-        foreach (var entry in planned)
-        {
-            first = new Int3(Math.Min(first.X, entry.Coord.X), first.Y, Math.Min(first.Z, entry.Coord.Z));
-            last = new Int3(Math.Max(last.X, entry.Coord.X), last.Y, Math.Max(last.Z, entry.Coord.Z));
-        }
-        if (!CanPlaceTerrainBlocks(terrain, first, last) || !PlaceTerrainBlocks(terrain, first, last)) return false;
+
+        var succeeded = true;
         Metadata<List<Int3>>.For(Map, out var storedWater, name: "Atlas_RemovedWater");
-        var placed = new List<Placement>();
-        foreach (var entry in planned)
+        foreach (var originalCoord in originalGroundCoords)
         {
-            var blockModel = GetBlockModelFromName(entry.MacroblockName);
-            if (!PlaceBlock(blockModel, entry.Coord, CardinalDirections.North))
+            var coord = new Int3(originalCoord.X, GetRealGroundHeight(originalCoord.X, originalCoord.Z), originalCoord.Z);
+
+            var old = GetBlock(coord);
+            if (old == null)
             {
-                RollbackRemovedWater(planned, placed, first, last);
-                return false;
+                Log($"RemoveWater failed: no block at ({coord.X}, {coord.Y}, {coord.Z}).");
+                succeeded = false;
+                continue;
             }
-            placed.Add(entry);
+            if (!removeWaterMapping.ContainsKey(old.BlockModel.Name))
+            {
+                Log($"RemoveWater failed: block '{old.BlockModel.Name}' at ({coord.X}, {coord.Y}, {coord.Z}) has no void mapping.");
+                succeeded = false;
+                continue;
+            }
+            var voidName = removeWaterMapping[old.BlockModel.Name];
+            var voidBlock = GetBlockModelFromName(voidName);
+            if (voidBlock == null)
+            {
+                Log($"RemoveWater failed: mapped void block '{voidName}' was not found.");
+                succeeded = false;
+                continue;
+            }
+
+            if (!PlaceBlock(voidBlock, coord, CardinalDirections.North))
+            {
+                Log($"RemoveWater failed: could not place void block '{voidName}' at ({coord.X}, {coord.Y}, {coord.Z}).");
+                succeeded = false;
+                continue;
+            }
+            if (!storedWater.Value!.Contains(originalCoord)) storedWater.Value.Add(originalCoord);
         }
-        foreach (var entry in planned)
-            if (!storedWater.Value!.Contains(entry.Coord)) storedWater.Value.Add(entry.Coord);
-        SetCurrentSelection(storedWater.Value!, true);
+        SetCurrentSelection(GetWaterSelectionCoords(storedWater.Value!), true);
         CustomSelectionRGB = new Vec3(0.55f, 0.30f, 0.10f);
-        return true;
+        return succeeded;
     }
 
-    private void RollbackRemovedWater(IList<Placement> planned, IList<Placement> placed,
-        Int3 first, Int3 last)
-    {
-        foreach (var entry in placed)
-            if (!RemoveBlock(entry.Coord)) lastRollbackFailed = true;
-        if (!RemoveTerrainBlocks(first, last)) lastRollbackFailed = true;
-        foreach (var entry in planned)
-        {
-            var original = GetBlockModelFromName(entry.Family);
-            if (entry.Ground) original = GetTerrainBlockModelFromName(entry.Family);
-            if (original == null) { lastRollbackFailed = true; continue; }
-            if (entry.Ground)
-            {
-                if (!PlaceTerrainBlocks(original, entry.Coord, entry.Coord)) lastRollbackFailed = true;
-            }
-            else if (!PlaceBlock(original, entry.Coord, entry.Direction)) lastRollbackFailed = true;
-        }
-    }
-
-    public bool RestoreWater(IList<Int3> coords)
+    public bool RestoreWater(Int3 start, Int3 end)
     {
         lastRollbackFailed = false;
         var water = GetBlockModelFromName(waterVoidName);
-        if (water == null) return false;
-        Metadata<List<Int3>>.For(Map, out var storedWater, name: "Atlas_RemovedWater");
-        var targets = new List<Int3>();
-        var originals = new List<Placement>();
-        foreach (var requested in coords)
+        if (water == null)
         {
-            foreach (var coord in storedWater.Value!)
+            Log($"RestoreWater failed: water block '{waterVoidName}' was not found.");
+            return false;
+        }
+        Metadata<List<Int3>>.For(Map, out var storedWater, name: "Atlas_RemovedWater");
+        var succeeded = true;
+        var availableVoidCoords = new List<Int3>();
+        var selectionCoords = new List<Int3>();
+        var minX = Math.Min(start.X, end.X);
+        var maxX = Math.Max(start.X, end.X);
+        var minZ = Math.Min(start.Z, end.Z);
+        var maxZ = Math.Max(start.Z, end.Z);
+
+        for (var x = minX; x <= maxX; x++)
+        for (var z = minZ; z <= maxZ; z++)
+            selectionCoords.Add(new Int3(x, CollectionGroundY, z));
+
+        // Snapshot the configured void blocks before phase 1 changes Blocks.
+        foreach (var block in Blocks)
+        {
+            if (block == null) continue;
+            if (restoreWaterVoidNames.Contains(block.BlockModel.Name) && !availableVoidCoords.Contains(block.Coord))
+                availableVoidCoords.Add(block.Coord);
+        }
+
+        // 1. Try removing configured terrain and border void blocks at every selected coordinate.
+        foreach (var groundCoord in selectionCoords)
+        {
+            var voidCoord = groundCoord;
+            if (!availableVoidCoords.Contains(voidCoord))
+                voidCoord = new Int3(groundCoord.X, CollectionGroundY + 1, groundCoord.Z);
+            if (!availableVoidCoords.Contains(voidCoord)) continue;
+            if (!RemoveBlock(voidCoord))
             {
-                if (coord.X != requested.X || coord.Z != requested.Z || targets.Contains(coord)) continue;
-                var block = GetBlock(coord);
-                if (block != null && restoreWaterVoidNames.Contains(block.BlockModel.Name))
+                Log($"RestoreWater failed: could not remove configured void block at {voidCoord}.");
+                succeeded = false;
+            }
+        }
+
+        // 2. Remove the terrain in one operation for the selected rectangle.
+        var terrainRemoved = RemoveTerrainBlocks(start, end);
+        if (!terrainRemoved)
+        {
+            Log($"RestoreWater failed: could not remove terrain from {start} to {end}.");
+            succeeded = false;
+        }
+
+        if (terrainRemoved)
+        {
+            // 3. Place water at every selected coordinate, removing matching metadata on success.
+            foreach (var groundCoord in selectionCoords)
+            {
+                if (!PlaceBlock(water, groundCoord, CardinalDirections.North))
                 {
-                    targets.Add(coord);
-                    originals.Add(new Placement { Coord = coord, MacroblockName = block.BlockModel.Name,
-                        Direction = block.Dir });
+                    Log($"RestoreWater failed: could not place water at {groundCoord}.");
+                    succeeded = false;
+                    continue;
+                }
+                var removedMetadata = new List<Int3>();
+                foreach (var storedCoord in storedWater.Value!)
+                    if (storedCoord.X == groundCoord.X && storedCoord.Z == groundCoord.Z) removedMetadata.Add(storedCoord);
+                foreach (var storedCoord in removedMetadata) storedWater.Value.Remove(storedCoord);
+            }
+
+            // 4. Try placing the configured border void outside the selection. Failure is expected.
+            if (removeWaterMapping.ContainsKey("Beach"))
+            {
+                var beachVoidName = removeWaterMapping["Beach"];
+                var beachVoid = GetBlockModelFromName(beachVoidName);
+                if (beachVoid != null)
+                {
+                    for (var x = minX - 1; x <= maxX + 1; x++)
+                    for (var z = minZ - 1; z <= maxZ + 1; z++)
+                    {
+                        var insideSelection = x >= minX && x <= maxX && z >= minZ && z <= maxZ;
+                        var innerEdge = insideSelection && (x == minX || x == maxX || z == minZ || z == maxZ);
+                        if (insideSelection && !innerEdge) continue;
+                        PlaceBlock(beachVoid, new Int3(x, CollectionGroundY, z), CardinalDirections.North);
+                    }
                 }
             }
         }
-        var restored = new List<Placement>();
-        for (var i = 0; i < targets.Count; i++)
-        {
-            var coord = targets[i];
-            if (!RemoveBlock(coord))
-            {
-                RollbackRestoredWater(restored);
-                return false;
-            }
-            restored.Add(originals[i]);
-            if (!RemoveTerrainBlocks(coord, coord) || !PlaceBlock(water, coord, CardinalDirections.North))
-            {
-                RollbackRestoredWater(restored);
-                return false;
-            }
-        }
-        foreach (var coord in targets) storedWater.Value!.Remove(coord);
         SetCurrentSelection(storedWater.Value!, true);
         CustomSelectionRGB = new Vec3(0.55f, 0.30f, 0.10f);
-        return true;
-    }
-
-    private void RollbackRestoredWater(IList<Placement> restored)
-    {
-        CBlockModel? terrain = null;
-        if (TerrainBlockModels.Count > 0) terrain = TerrainBlockModels[0];
-        if (flatTerrainName != "") terrain = GetTerrainBlockModelFromName(flatTerrainName);
-        foreach (var entry in restored)
-        {
-            if (!RemoveBlock(entry.Coord)) lastRollbackFailed = true;
-            if (terrain != null)
-            {
-                if (!PlaceTerrainBlocks(terrain, entry.Coord, entry.Coord)) lastRollbackFailed = true;
-            }
-            else lastRollbackFailed = true;
-            var oldVoid = GetBlockModelFromName(entry.MacroblockName);
-            if (oldVoid != null)
-            {
-                if (!PlaceBlock(oldVoid, entry.Coord, entry.Direction)) lastRollbackFailed = true;
-            }
-            else lastRollbackFailed = true;
-        }
+        return succeeded;
     }
 
     public bool PlaceItemBlock(string macroblockName, Int3 coord, CardinalDirections direction, bool ground,
