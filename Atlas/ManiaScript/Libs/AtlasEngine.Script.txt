@@ -519,8 +519,11 @@ Boolean RemoveWater(Int3 _Start, Int3 _End) {
   return Succeeded;
 }
 
-Boolean RestoreWater(Int3 _Start, Int3 _End) {
+Boolean RestoreWater(Int3[] _Coords) {
   G_LastRollbackFailed = False;
+  if (_Coords.count == 0) {
+    return False;
+  }
   declare Water = GetBlockModelFromName(G_WaterVoidName);
   if (Water == Null) {
     log("RestoreWater failed: water block '" ^ G_WaterVoidName ^ "' was not found.");
@@ -530,13 +533,9 @@ Boolean RestoreWater(Int3 _Start, Int3 _End) {
   declare Succeeded = True;
   declare Int3[] AvailableVoidCoords;
   declare Int3[] SelectionCoords;
-  declare MinX = MathLib::Min(_Start.X, _End.X);
-  declare MaxX = MathLib::Max(_Start.X, _End.X);
-  declare MinZ = MathLib::Min(_Start.Z, _End.Z);
-  declare MaxZ = MathLib::Max(_Start.Z, _End.Z);
-  for (X, MinX, MaxX) {
-    for (Z, MinZ, MaxZ) {
-      SelectionCoords.add(<X, CollectionGroundY, Z>);
+  foreach (Coord in _Coords) {
+    if (!SelectionCoords.exists(Coord)) {
+      SelectionCoords.add(Coord);
     }
   }
   foreach (Block in Blocks) {
@@ -560,42 +559,52 @@ Boolean RestoreWater(Int3 _Start, Int3 _End) {
       Succeeded = False;
     }
   }
-  declare TerrainRemoved = RemoveTerrainBlocks(_Start, _End);
-  if (!TerrainRemoved) {
-    log("RestoreWater failed: could not remove terrain from " ^ _Start ^ " to " ^ _End ^ ".");
-    Succeeded = False;
+  declare Int3[] TerrainReadyCoords;
+  foreach (GroundCoord in SelectionCoords) {
+    if (!RemoveTerrainBlocks(GroundCoord, GroundCoord)) {
+      log("RestoreWater failed: could not remove terrain at " ^ GroundCoord ^ ".");
+      Succeeded = False;
+      continue;
+    }
+    TerrainReadyCoords.add(GroundCoord);
   }
-  if (TerrainRemoved) {
-    foreach (GroundCoord in SelectionCoords) {
-      if (!PlaceBlock(Water, GroundCoord, CMapEditorPlugin::CardinalDirections::North)) {
-        log("RestoreWater failed: could not place water at " ^ GroundCoord ^ ".");
-        Succeeded = False;
-        continue;
-      }
-      declare Int3[] RemovedMetadata;
-      foreach (StoredCoord in StoredWater/* not Null here */) {
-        if (StoredCoord.X == GroundCoord.X && StoredCoord.Z == GroundCoord.Z) {
-          RemovedMetadata.add(StoredCoord);
-        }
-      }
-      foreach (StoredCoord in RemovedMetadata) {
-        StoredWater.remove(StoredCoord);
+  foreach (GroundCoord in TerrainReadyCoords) {
+    if (!PlaceBlock(Water, GroundCoord, CMapEditorPlugin::CardinalDirections::North)) {
+      log("RestoreWater failed: could not place water at " ^ GroundCoord ^ ".");
+      Succeeded = False;
+      continue;
+    }
+    declare Int3[] RemovedMetadata;
+    foreach (StoredCoord in StoredWater/* not Null here */) {
+      if (StoredCoord.X == GroundCoord.X && StoredCoord.Z == GroundCoord.Z) {
+        RemovedMetadata.add(StoredCoord);
       }
     }
-    if (G_RemoveWaterMapping.existskey("Beach")) {
-      declare BeachVoidName = G_RemoveWaterMapping["Beach"];
-      declare BeachVoid = GetBlockModelFromName(BeachVoidName);
-      if (BeachVoid != Null) {
-        for (X, MinX - 1, MaxX + 1) {
-          for (Z, MinZ - 1, MaxZ + 1) {
-            declare InsideSelection = X >= MinX && X <= MaxX && Z >= MinZ && Z <= MaxZ;
-            declare InnerEdge = InsideSelection && (X == MinX || X == MaxX || Z == MinZ || Z == MaxZ);
-            if (InsideSelection && !InnerEdge) {
-              continue;
+    foreach (StoredCoord in RemovedMetadata) {
+      StoredWater.remove(StoredCoord);
+    }
+  }
+  if (G_RemoveWaterMapping.existskey("Beach")) {
+    declare BeachVoidName = G_RemoveWaterMapping["Beach"];
+    declare BeachVoid = GetBlockModelFromName(BeachVoidName);
+    if (BeachVoid != Null) {
+      declare Int3[] OutsideCoords;
+      foreach (Coord in SelectionCoords) {
+        declare Neighbors = [<Coord.X - 1, Coord.Y, Coord.Z>, <Coord.X + 1, Coord.Y, Coord.Z>, <Coord.X, Coord.Y, Coord.Z - 1>, <Coord.X, Coord.Y, Coord.Z + 1>, <Coord.X - 1, Coord.Y, Coord.Z - 1>, <Coord.X - 1, Coord.Y, Coord.Z + 1>, <Coord.X + 1, Coord.Y, Coord.Z - 1>, <Coord.X + 1, Coord.Y, Coord.Z + 1>];
+        foreach (Neighbor in Neighbors) {
+          declare InsideSelection = False;
+          foreach (Selected in SelectionCoords) {
+            if (Selected.X == Neighbor.X && Selected.Z == Neighbor.Z) {
+              InsideSelection = True;
             }
-            PlaceBlock(BeachVoid, <X, CollectionGroundY, Z>, CMapEditorPlugin::CardinalDirections::North);
+          }
+          if (!InsideSelection && !OutsideCoords.exists(Neighbor)) {
+            OutsideCoords.add(Neighbor);
           }
         }
+      }
+      foreach (Coord in OutsideCoords) {
+        PlaceBlock(BeachVoid, Coord, CMapEditorPlugin::CardinalDirections::North);
       }
     }
   }
@@ -658,7 +667,7 @@ Void Update() {
       if (G_Mode == C_SelectionMode_RemoveWater) {
         RemoveWater(G_DragStart, CursorCoord);
       } else if (G_Mode == C_SelectionMode_RestoreWater) {
-        RestoreWater(G_DragStart, CursorCoord);
+        RestoreWater(Coords);
       } else {
         SetCurrentSelection(Coords, True);
       }

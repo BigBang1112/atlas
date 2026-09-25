@@ -387,7 +387,7 @@ public class AtlasEngine : CMapEditorPlugin, ILib
             {
                 selectionConfirmed.Add(change);
                 if (mode == SelectionMode.RemoveWater) RemoveWater(dragStart, cursorCoord);
-                else if (mode == SelectionMode.RestoreWater) RestoreWater(dragStart, cursorCoord);
+                else if (mode == SelectionMode.RestoreWater) RestoreWater(coords);
                 else SetCurrentSelection(coords, true);
                 dragging = false;
             }
@@ -545,9 +545,10 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         return succeeded;
     }
 
-    public bool RestoreWater(Int3 start, Int3 end)
+    public bool RestoreWater(IList<Int3> coords)
     {
         lastRollbackFailed = false;
+        if (coords.Count == 0) return false;
         var water = GetBlockModelFromName(waterVoidName);
         if (water == null)
         {
@@ -558,14 +559,8 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         var succeeded = true;
         var availableVoidCoords = new List<Int3>();
         var selectionCoords = new List<Int3>();
-        var minX = Math.Min(start.X, end.X);
-        var maxX = Math.Max(start.X, end.X);
-        var minZ = Math.Min(start.Z, end.Z);
-        var maxZ = Math.Max(start.Z, end.Z);
-
-        for (var x = minX; x <= maxX; x++)
-        for (var z = minZ; z <= maxZ; z++)
-            selectionCoords.Add(new Int3(x, CollectionGroundY, z));
+        foreach (var coord in coords)
+            if (!selectionCoords.Contains(coord)) selectionCoords.Add(coord);
 
         // Snapshot the configured void blocks before phase 1 changes Blocks.
         foreach (var block in Blocks)
@@ -589,47 +584,65 @@ public class AtlasEngine : CMapEditorPlugin, ILib
             }
         }
 
-        // 2. Remove the terrain in one operation for the selected rectangle.
-        var terrainRemoved = RemoveTerrainBlocks(start, end);
-        if (!terrainRemoved)
+        // 2. Remove terrain one coordinate at a time.
+        var terrainReadyCoords = new List<Int3>();
+        foreach (var groundCoord in selectionCoords)
         {
-            Log($"RestoreWater failed: could not remove terrain from {start} to {end}.");
-            succeeded = false;
+            if (!RemoveTerrainBlocks(groundCoord, groundCoord))
+            {
+                Log($"RestoreWater failed: could not remove terrain at {groundCoord}.");
+                succeeded = false;
+                continue;
+            }
+            terrainReadyCoords.Add(groundCoord);
         }
 
-        if (terrainRemoved)
+        // 3. Place water within the selection, removing matching metadata on success.
+        foreach (var groundCoord in terrainReadyCoords)
         {
-            // 3. Place water at every selected coordinate, removing matching metadata on success.
-            foreach (var groundCoord in selectionCoords)
+            if (!PlaceBlock(water, groundCoord, CardinalDirections.North))
             {
-                if (!PlaceBlock(water, groundCoord, CardinalDirections.North))
-                {
-                    Log($"RestoreWater failed: could not place water at {groundCoord}.");
-                    succeeded = false;
-                    continue;
-                }
-                var removedMetadata = new List<Int3>();
-                foreach (var storedCoord in storedWater.Value!)
-                    if (storedCoord.X == groundCoord.X && storedCoord.Z == groundCoord.Z) removedMetadata.Add(storedCoord);
-                foreach (var storedCoord in removedMetadata) storedWater.Value.Remove(storedCoord);
+                Log($"RestoreWater failed: could not place water at {groundCoord}.");
+                succeeded = false;
+                continue;
             }
+            var removedMetadata = new List<Int3>();
+            foreach (var storedCoord in storedWater.Value!)
+                if (storedCoord.X == groundCoord.X && storedCoord.Z == groundCoord.Z) removedMetadata.Add(storedCoord);
+            foreach (var storedCoord in removedMetadata) storedWater.Value.Remove(storedCoord);
+        }
 
-            // 4. Try placing the configured border void outside the selection. Failure is expected.
-            if (removeWaterMapping.ContainsKey("Beach"))
+        // 4. Try placing the configured border void outside the selection. Failure is expected.
+        if (removeWaterMapping.ContainsKey("Beach"))
+        {
+            var beachVoidName = removeWaterMapping["Beach"];
+            var beachVoid = GetBlockModelFromName(beachVoidName);
+            if (beachVoid != null)
             {
-                var beachVoidName = removeWaterMapping["Beach"];
-                var beachVoid = GetBlockModelFromName(beachVoidName);
-                if (beachVoid != null)
+                var outsideCoords = new List<Int3>();
+                foreach (var coord in selectionCoords)
                 {
-                    for (var x = minX - 1; x <= maxX + 1; x++)
-                    for (var z = minZ - 1; z <= maxZ + 1; z++)
+                    var neighbors = new List<Int3>
                     {
-                        var insideSelection = x >= minX && x <= maxX && z >= minZ && z <= maxZ;
-                        var innerEdge = insideSelection && (x == minX || x == maxX || z == minZ || z == maxZ);
-                        if (insideSelection && !innerEdge) continue;
-                        PlaceBlock(beachVoid, new Int3(x, CollectionGroundY, z), CardinalDirections.North);
+                        new Int3(coord.X - 1, coord.Y, coord.Z),
+                        new Int3(coord.X + 1, coord.Y, coord.Z),
+                        new Int3(coord.X, coord.Y, coord.Z - 1),
+                        new Int3(coord.X, coord.Y, coord.Z + 1),
+                        new Int3(coord.X - 1, coord.Y, coord.Z - 1),
+                        new Int3(coord.X - 1, coord.Y, coord.Z + 1),
+                        new Int3(coord.X + 1, coord.Y, coord.Z - 1),
+                        new Int3(coord.X + 1, coord.Y, coord.Z + 1)
+                    };
+                    foreach (var neighbor in neighbors)
+                    {
+                        var insideSelection = false;
+                        foreach (var selected in selectionCoords)
+                            if (selected.X == neighbor.X && selected.Z == neighbor.Z) insideSelection = true;
+                        if (!insideSelection && !outsideCoords.Contains(neighbor)) outsideCoords.Add(neighbor);
                     }
                 }
+                foreach (var coord in outsideCoords)
+                    PlaceBlock(beachVoid, coord, CardinalDirections.North);
             }
         }
         SetCurrentSelection(storedWater.Value!, true);
