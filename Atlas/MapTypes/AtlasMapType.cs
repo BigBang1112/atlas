@@ -113,7 +113,7 @@ public class AtlasMapType : CMapType, IContext
         ManialinkText = """
             <manialink version="3">
               <frame pos="91 76">
-                <quad pos="0 0" z-index="0" size="65 67" bgcolor="1112" />
+                <quad pos="0 0" z-index="0" size="65 75" bgcolor="1112" />
                 <label pos="3 -2" z-index="2" size="59 5" text="ATLAS TOOLS" textsize="2" textcolor="fff" />
                 <label pos="3 -8" z-index="2" size="59 4" text="Select a mode, then drag in the map" textsize="1" textcolor="ccc" />
 
@@ -132,12 +132,15 @@ public class AtlasMapType : CMapType, IContext
                 <quad pos="34 -34" z-index="1" size="28 8" bgcolor="3670" />
                 <label id="AtlasRestoreWater" pos="35 -35" z-index="2" size="26 6" text="Restore water" textsize="2" textcolor="fff" scriptevents="1" />
 
-                <quad pos="3 -46" z-index="1" size="28 8" bgcolor="7540" />
-                <label id="AtlasUndo" pos="4 -47" z-index="2" size="26 6" text="Undo" textsize="2" textcolor="fff" scriptevents="1" />
-                <quad pos="34 -46" z-index="1" size="28 8" bgcolor="7540" />
-                <label id="AtlasRedo" pos="35 -47" z-index="2" size="26 6" text="Redo" textsize="2" textcolor="fff" scriptevents="1" />
+                <quad pos="3 -46" z-index="1" size="59 8" bgcolor="4a80" />
+                <label id="AtlasNone" pos="4 -47" z-index="2" size="57 6" text="No selection" textsize="2" textcolor="fff" scriptevents="1" />
 
-                <label id="AtlasStatus" pos="3 -58" z-index="2" size="59 5" text="Mode: Ground docks" textsize="1" textcolor="ccc" />
+                <quad pos="3 -56" z-index="1" size="28 8" bgcolor="7540" />
+                <label id="AtlasUndo" pos="4 -57" z-index="2" size="26 6" text="Undo item" textsize="2" textcolor="fff" scriptevents="1" />
+                <quad pos="34 -56" z-index="1" size="28 8" bgcolor="7540" />
+                <label id="AtlasRedo" pos="35 -57" z-index="2" size="26 6" text="Redo item" textsize="2" textcolor="fff" scriptevents="1" />
+
+                <label id="AtlasStatus" pos="3 -68" z-index="2" size="59 5" text="Mode: Ground docks" textsize="1" textcolor="ccc" />
               </frame>
               <script><!--
                 main() {
@@ -145,7 +148,7 @@ public class AtlasMapType : CMapType, IContext
                   declare Boolean WasPointerOverPanel = False;
                   while (True) {
                     yield;
-                    declare Boolean PointerOverPanel = MouseX >= 91. && MouseX <= 156. && MouseY <= 76. && MouseY >= 9.;
+                    declare Boolean PointerOverPanel = MouseX >= 91. && MouseX <= 156. && MouseY <= 76. && MouseY >= 1.;
                     if (PointerOverPanel != WasPointerOverPanel) {
                       if (PointerOverPanel) SendCustomEvent("AtlasPanelHover", ["1"]);
                       else SendCustomEvent("AtlasPanelHover", ["0"]);
@@ -159,6 +162,7 @@ public class AtlasMapType : CMapType, IContext
                       else if (Event.ControlId == "AtlasLine") Status.Value = "Mode: Line";
                       else if (Event.ControlId == "AtlasRemoveWater") Status.Value = "Mode: Remove water";
                       else if (Event.ControlId == "AtlasRestoreWater") Status.Value = "Mode: Restore water";
+                      else if (Event.ControlId == "AtlasNone") Status.Value = "Mode: No selection";
                       SendCustomEvent("AtlasPanel", [Event.ControlId]);
                     }
                   }
@@ -192,14 +196,15 @@ public class AtlasMapType : CMapType, IContext
             else if (action == "AtlasLine") atlas.SetSelectionMode(AtlasEngine.SelectionMode.Line1D);
             else if (action == "AtlasRemoveWater") atlas.SetSelectionMode(AtlasEngine.SelectionMode.RemoveWater);
             else if (action == "AtlasRestoreWater") atlas.SetSelectionMode(AtlasEngine.SelectionMode.RestoreWater);
+            else if (action == "AtlasNone") atlas.SetSelectionMode(AtlasEngine.SelectionMode.None);
             else if (action == "AtlasUndo")
             {
-                if (!atlas.CanUndoAtlasEdit) Log("No Atlas edit to undo.");
+                if (!atlas.CanUndoAtlasEdit) Log("No item edit to undo.");
                 else if (!atlas.UndoAtlasEdit()) Log("Atlas undo failed.");
             }
             else if (action == "AtlasRedo")
             {
-                if (!atlas.CanRedoAtlasEdit) Log("No Atlas edit to redo.");
+                if (!atlas.CanRedoAtlasEdit) Log("No item edit to redo.");
                 else if (!atlas.RedoAtlasEdit()) Log("Atlas redo failed.");
             }
         }

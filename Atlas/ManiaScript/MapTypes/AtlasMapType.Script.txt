@@ -16,7 +16,7 @@ Atlas::SetSelectionMode(Atlas::C_SelectionMode_Ground2D);
 Atlas::SetFreeformPlacementMode(Atlas::C_FreeformPlacementMode_SelectionOnly);
 ManialinkText = """<manialink version="3">
   <frame pos="91 76">
-    <quad pos="0 0" z-index="0" size="65 67" bgcolor="1112" />
+    <quad pos="0 0" z-index="0" size="65 75" bgcolor="1112" />
     <label pos="3 -2" z-index="2" size="59 5" text="ATLAS TOOLS" textsize="2" textcolor="fff" />
     <label pos="3 -8" z-index="2" size="59 4" text="Select a mode, then drag in the map" textsize="1" textcolor="ccc" />
 
@@ -35,12 +35,15 @@ ManialinkText = """<manialink version="3">
     <quad pos="34 -34" z-index="1" size="28 8" bgcolor="3670" />
     <label id="AtlasRestoreWater" pos="35 -35" z-index="2" size="26 6" text="Restore water" textsize="2" textcolor="fff" scriptevents="1" />
 
-    <quad pos="3 -46" z-index="1" size="28 8" bgcolor="7540" />
-    <label id="AtlasUndo" pos="4 -47" z-index="2" size="26 6" text="Undo" textsize="2" textcolor="fff" scriptevents="1" />
-    <quad pos="34 -46" z-index="1" size="28 8" bgcolor="7540" />
-    <label id="AtlasRedo" pos="35 -47" z-index="2" size="26 6" text="Redo" textsize="2" textcolor="fff" scriptevents="1" />
+    <quad pos="3 -46" z-index="1" size="59 8" bgcolor="4a80" />
+    <label id="AtlasNone" pos="4 -47" z-index="2" size="57 6" text="No selection" textsize="2" textcolor="fff" scriptevents="1" />
 
-    <label id="AtlasStatus" pos="3 -58" z-index="2" size="59 5" text="Mode: Ground docks" textsize="1" textcolor="ccc" />
+    <quad pos="3 -56" z-index="1" size="28 8" bgcolor="7540" />
+    <label id="AtlasUndo" pos="4 -57" z-index="2" size="26 6" text="Undo" textsize="2" textcolor="fff" scriptevents="1" />
+    <quad pos="34 -56" z-index="1" size="28 8" bgcolor="7540" />
+    <label id="AtlasRedo" pos="35 -57" z-index="2" size="26 6" text="Redo" textsize="2" textcolor="fff" scriptevents="1" />
+
+    <label id="AtlasStatus" pos="3 -68" z-index="2" size="59 5" text="Mode: Ground docks" textsize="1" textcolor="ccc" />
   </frame>
   <script><!--
     main() {
@@ -48,7 +51,7 @@ ManialinkText = """<manialink version="3">
       declare Boolean WasPointerOverPanel = False;
       while (True) {
         yield;
-        declare Boolean PointerOverPanel = MouseX >= 91. && MouseX <= 156. && MouseY <= 76. && MouseY >= 9.;
+        declare Boolean PointerOverPanel = MouseX >= 91. && MouseX <= 156. && MouseY <= 76. && MouseY >= 1.;
         if (PointerOverPanel != WasPointerOverPanel) {
           if (PointerOverPanel) SendCustomEvent("AtlasPanelHover", ["1"]);
           else SendCustomEvent("AtlasPanelHover", ["0"]);
@@ -62,6 +65,7 @@ ManialinkText = """<manialink version="3">
           else if (Event.ControlId == "AtlasLine") Status.Value = "Mode: Line";
           else if (Event.ControlId == "AtlasRemoveWater") Status.Value = "Mode: Remove water";
           else if (Event.ControlId == "AtlasRestoreWater") Status.Value = "Mode: Restore water";
+          else if (Event.ControlId == "AtlasNone") Status.Value = "Mode: No selection";
           SendCustomEvent("AtlasPanel", [Event.ControlId]);
         }
       }
@@ -100,17 +104,21 @@ while (True) {
         } else if (Action == "AtlasRestoreWater") {
           Atlas::SetSelectionMode(Atlas::C_SelectionMode_RestoreWater);
         } else {
-          if (Action == "AtlasUndo") {
+          if (Action == "AtlasNone") {
+            Atlas::SetSelectionMode(Atlas::C_SelectionMode_None);
+          } else if (Action == "AtlasUndo") {
             if (!Atlas::GetCanUndoAtlasEdit()) {
-              log("No Atlas edit to undo.");
+              log("No item edit to undo.");
             } else if (!Atlas::UndoAtlasEdit()) {
               log("Atlas undo failed.");
             }
-          } else if (Action == "AtlasRedo") {
-            if (!Atlas::GetCanRedoAtlasEdit()) {
-              log("No Atlas edit to redo.");
-            } else if (!Atlas::RedoAtlasEdit()) {
-              log("Atlas redo failed.");
+          } else {
+            if (Action == "AtlasRedo") {
+              if (!Atlas::GetCanRedoAtlasEdit()) {
+                log("No item edit to redo.");
+              } else if (!Atlas::RedoAtlasEdit()) {
+                log("Atlas redo failed.");
+              }
             }
           }
         }

@@ -92,22 +92,14 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         public List<NoItemReplacement> Removed;
     }
 
-    private enum AtlasEditKind { Item, RemoveWater, RestoreWater }
-
     private struct AtlasEdit
     {
-        public AtlasEditKind Kind;
         public List<ItemBlock> Before;
         public List<ItemBlock> After;
         public List<ItemBlock> AddedBlocks;
         public List<ItemBlock> RemovedBlocks;
         public List<NoItemReplacement> RemovedNoItemBlocks;
         public string NoItemBlockName;
-        public Int3 Start;
-        public Int3 End;
-        public List<Int3> WaterCoords;
-        public List<Int3> BeforeWater;
-        public List<Int3> AfterWater;
     }
 
     public struct FreeformCandidate
@@ -145,6 +137,7 @@ public class AtlasEngine : CMapEditorPlugin, ILib
     private readonly Dictionary<string, List<List<ItemBlockVariant>>> itemBlockGroups = [];
     private readonly Dictionary<string, Dictionary<int, int>> cubePieceMapping = [];
     private readonly Dictionary<Int3, int> groundItemHeights = [];
+    private readonly Dictionary<Int3, int> removedWaterGroundHeights = [];
     private bool groundItemHeightsValid;
 
     public SelectionMode Mode => mode;
@@ -242,34 +235,6 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         return copy;
     }
 
-    private static List<Int3> CopyCoords(IList<Int3> coords)
-    {
-        var copy = new List<Int3>();
-        foreach (var coord in coords) copy.Add(coord);
-        return copy;
-    }
-
-    private static bool SameCoordLists(IList<Int3> first, IList<Int3> second)
-    {
-        if (first.Count != second.Count) return false;
-        var sameOrder = true;
-        for (var i = 0; i < first.Count; i++)
-            if (!SameCoord(first[i], second[i])) { sameOrder = false; break; }
-        if (sameOrder) return true;
-        var counts = new Dictionary<Int3, int>();
-        foreach (var coord in second)
-        {
-            if (!counts.ContainsKey(coord)) counts[coord] = 0;
-            counts[coord]++;
-        }
-        foreach (var coord in first)
-        {
-            if (!counts.ContainsKey(coord) || counts[coord] == 0) return false;
-            counts[coord]--;
-        }
-        return true;
-    }
-
     private static bool SameItemBlockLists(IList<ItemBlock> first, IList<ItemBlock> second)
     {
         if (first.Count != second.Count) return false;
@@ -316,19 +281,10 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         if (removed.Count == 0 && added.Count == 0) return;
         var placeholders = new List<NoItemReplacement>();
         foreach (var entry in removedNoItemBlocks) placeholders.Add(entry);
-        PushUndoEdit(new AtlasEdit { Kind = AtlasEditKind.Item,
+        PushUndoEdit(new AtlasEdit {
             Before = CopyItemBlocks(before), After = CopyItemBlocks(after),
             AddedBlocks = added, RemovedBlocks = removed,
             RemovedNoItemBlocks = placeholders, NoItemBlockName = noItemBlockName });
-    }
-
-    private void RecordWaterEdit(AtlasEditKind kind, Int3 start, Int3 end, IList<Int3> coords,
-        IList<Int3> before)
-    {
-        if (replayingHistory) return;
-        PushUndoEdit(new AtlasEdit { Kind = kind, Start = start, End = end,
-            WaterCoords = CopyCoords(coords), BeforeWater = CopyCoords(before),
-            AfterWater = CopyCoords(GetRemovedWater()) });
     }
 
     private void PushUndoEdit(AtlasEdit edit)
@@ -361,58 +317,27 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         return true;
     }
 
-    private bool ReplayWaterEdit(AtlasEdit edit, bool undo)
-    {
-        if (edit.Kind == AtlasEditKind.RemoveWater)
-            return undo ? RestoreWater(edit.WaterCoords) : RemoveWater(edit.Start, edit.End);
-        if (!undo) return RestoreWater(edit.WaterCoords);
-        foreach (var coord in edit.WaterCoords)
-            if (!RemoveWater(coord, coord)) return false;
-        return true;
-    }
-
-    private void RefreshWaterSelection()
-    {
-        if (mode == SelectionMode.RemoveWater)
-            SetCurrentSelection(GetWaterSelectionCoords(GetRemovedWater()), true);
-        else if (mode == SelectionMode.RestoreWater)
-            SetCurrentSelection(GetRemovedWater(), true);
-    }
-
     public bool UndoAtlasEdit()
     {
         if (!CanUndoAtlasEdit) return false;
         var edit = undoEdits[undoEdits.Count - 1];
-        if ((edit.Kind == AtlasEditKind.Item && !SameItemBlockLists(GetItemBlockList(), edit.After)) ||
-            (edit.Kind != AtlasEditKind.Item && !SameCoordLists(GetRemovedWater(), edit.AfterWater)))
+        if (!SameItemBlockLists(GetItemBlockList(), edit.After))
         { ClearAtlasEditHistory(); return false; }
         var configuredNoItemBlockName = noItemBlockName;
-        if (edit.Kind == AtlasEditKind.Item) noItemBlockName = edit.NoItemBlockName;
+        noItemBlockName = edit.NoItemBlockName;
         replayingHistory = true;
-        var succeeded = false;
-        if (edit.Kind == AtlasEditKind.Item)
+        var succeeded = ApplyItemSnapshot(edit.Before, edit.AddedBlocks, edit.RemovedBlocks);
+        if (succeeded)
         {
-            succeeded = ApplyItemSnapshot(edit.Before, edit.AddedBlocks, edit.RemovedBlocks);
-            if (succeeded)
-            {
-                lastRollbackFailed = false;
-                Log($"Atlas undo: restoring {edit.RemovedNoItemBlocks.Count} no-item block(s).");
-                RestoreNoItemBlocks(edit.RemovedNoItemBlocks);
-                succeeded = !lastRollbackFailed;
-                if (!succeeded) ApplyItemSnapshot(edit.After, edit.RemovedBlocks, edit.AddedBlocks);
-                else SnapshotItems();
-            }
-        }
-        else
-        {
-            succeeded = ReplayWaterEdit(edit, true);
-            if (succeeded) SetRemovedWater(edit.BeforeWater);
-            else if (ReplayWaterEdit(edit, false)) SetRemovedWater(edit.AfterWater);
-            else lastRollbackFailed = true;
+            lastRollbackFailed = false;
+            Log($"Atlas undo: restoring {edit.RemovedNoItemBlocks.Count} no-item block(s).");
+            RestoreNoItemBlocks(edit.RemovedNoItemBlocks);
+            succeeded = !lastRollbackFailed;
+            if (!succeeded) ApplyItemSnapshot(edit.After, edit.RemovedBlocks, edit.AddedBlocks);
+            else SnapshotItems();
         }
         replayingHistory = false;
-        if (edit.Kind == AtlasEditKind.Item) noItemBlockName = configuredNoItemBlockName;
-        if (edit.Kind != AtlasEditKind.Item) RefreshWaterSelection();
+        noItemBlockName = configuredNoItemBlockName;
         if (!succeeded)
         {
             if (lastRollbackFailed) ClearAtlasEditHistory();
@@ -427,23 +352,14 @@ public class AtlasEngine : CMapEditorPlugin, ILib
     {
         if (!CanRedoAtlasEdit) return false;
         var edit = redoEdits[redoEdits.Count - 1];
-        if ((edit.Kind == AtlasEditKind.Item && !SameItemBlockLists(GetItemBlockList(), edit.Before)) ||
-            (edit.Kind != AtlasEditKind.Item && !SameCoordLists(GetRemovedWater(), edit.BeforeWater)))
+        if (!SameItemBlockLists(GetItemBlockList(), edit.Before))
         { ClearAtlasEditHistory(); return false; }
         var configuredNoItemBlockName = noItemBlockName;
-        if (edit.Kind == AtlasEditKind.Item) noItemBlockName = edit.NoItemBlockName;
+        noItemBlockName = edit.NoItemBlockName;
         replayingHistory = true;
-        var succeeded = edit.Kind == AtlasEditKind.Item
-            ? ApplyItemSnapshot(edit.After, edit.RemovedBlocks, edit.AddedBlocks) : ReplayWaterEdit(edit, false);
-        if (edit.Kind != AtlasEditKind.Item)
-        {
-            if (succeeded) SetRemovedWater(edit.AfterWater);
-            else if (ReplayWaterEdit(edit, true)) SetRemovedWater(edit.BeforeWater);
-            else lastRollbackFailed = true;
-        }
+        var succeeded = ApplyItemSnapshot(edit.After, edit.RemovedBlocks, edit.AddedBlocks);
         replayingHistory = false;
-        if (edit.Kind == AtlasEditKind.Item) noItemBlockName = configuredNoItemBlockName;
-        if (edit.Kind != AtlasEditKind.Item) RefreshWaterSelection();
+        noItemBlockName = configuredNoItemBlockName;
         if (!succeeded)
         {
             if (lastRollbackFailed) ClearAtlasEditHistory();
@@ -500,6 +416,7 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         Metadata<List<Int3>>.For(Map, out var stored, name: "Atlas_RemovedWater");
         stored.Value!.Clear();
         foreach (var coord in copy) stored.Value.Add(coord);
+        groundItemHeightsValid = false;
     }
 
     public void SetItemBlockGroup(string family, List<List<ItemBlockVariant>> variants) => itemBlockGroups[family] = variants;
@@ -555,6 +472,14 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         if (!groundItemHeightsValid)
         {
             groundItemHeights.Clear();
+            removedWaterGroundHeights.Clear();
+            foreach (var coord in GetRemovedWater())
+            {
+                var cell = new Int3(coord.X, 0, coord.Z);
+                if (!removedWaterGroundHeights.ContainsKey(cell) ||
+                    coord.Y < removedWaterGroundHeights[cell])
+                    removedWaterGroundHeights[cell] = coord.Y;
+            }
             foreach (var block in GetItemBlockList())
             {
                 if (!block.Ground) continue;
@@ -568,8 +493,11 @@ public class AtlasEngine : CMapEditorPlugin, ILib
             }
             groundItemHeightsValid = true;
         }
-        var height = GetGroundHeight(x, z);
         var key = new Int3(x, 0, z);
+        // Removed-water terrain changes the real ground height. Ground items still
+        // use the height saved before that terrain was placed.
+        var height = removedWaterGroundHeights.ContainsKey(key)
+            ? removedWaterGroundHeights[key] : GetGroundHeight(x, z);
         if (groundItemHeights.ContainsKey(key) && groundItemHeights[key] > height) height = groundItemHeights[key];
         return height;
     }
@@ -824,7 +752,6 @@ public class AtlasEngine : CMapEditorPlugin, ILib
     public bool RemoveWater(Int3 start, Int3 end)
     {
         lastRollbackFailed = false;
-        var beforeWater = CopyCoords(GetRemovedWater());
         Log($"RemoveWater requested: from ({start.X}, {start.Y}, {start.Z}) to ({end.X}, {end.Y}, {end.Z}).");
         if (TerrainBlockModels.Count == 0)
         {
@@ -886,8 +813,7 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         }
         SetCurrentSelection(GetWaterSelectionCoords(storedWater.Value!), true);
         CustomSelectionRGB = new Vec3(0.55f, 0.30f, 0.10f);
-        if (succeeded) RecordWaterEdit(AtlasEditKind.RemoveWater, start, end, originalGroundCoords, beforeWater);
-        else if (!replayingHistory) ClearAtlasEditHistory();
+        groundItemHeightsValid = false;
         return succeeded;
     }
 
@@ -895,7 +821,6 @@ public class AtlasEngine : CMapEditorPlugin, ILib
     {
         lastRollbackFailed = false;
         if (coords.Count == 0) return false;
-        var beforeWater = CopyCoords(GetRemovedWater());
         var water = GetBlockModelFromName(waterVoidName);
         if (water == null)
         {
@@ -915,7 +840,6 @@ public class AtlasEngine : CMapEditorPlugin, ILib
                 selectedCoords[coord] = true;
                 selectedColumns[new Int3(coord.X, 0, coord.Z)] = true;
             }
-
         // Snapshot the configured void blocks before phase 1 changes Blocks.
         foreach (var block in Blocks)
         {
@@ -1013,9 +937,7 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         }
         SetCurrentSelection(storedWater.Value!, true);
         CustomSelectionRGB = new Vec3(0.55f, 0.30f, 0.10f);
-        if (succeeded) RecordWaterEdit(AtlasEditKind.RestoreWater, selectionCoords[0], selectionCoords[0],
-            selectionCoords, beforeWater);
-        else if (!replayingHistory) ClearAtlasEditHistory();
+        groundItemHeightsValid = false;
         return succeeded;
     }
 
