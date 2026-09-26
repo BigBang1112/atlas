@@ -56,6 +56,13 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         public int Depth;
     }
 
+    public struct ItemBlockVariant
+    {
+        public string MacroblockName;
+        /// <summary>Clockwise quarter turns added to the resolved piece direction.</summary>
+        public int DirectionOffset;
+    }
+
     public struct FreeformCandidate
     {
         public int Piece;
@@ -74,6 +81,7 @@ public class AtlasEngine : CMapEditorPlugin, ILib
     private bool lastRollbackFailed;
     private readonly List<Int3> lastSelectionChange = [];
     private bool hasLastSelectionChange;
+    private bool emitSelectionChanged;
     private readonly List<SelectionChange> selectionChanged = [];
     private readonly List<SelectionChange> selectionConfirmed = [];
     private readonly List<ItemRemoval> itemRemovals = [];
@@ -81,8 +89,10 @@ public class AtlasEngine : CMapEditorPlugin, ILib
     private readonly Dictionary<string, string> removeWaterMapping = [];
     private readonly List<string> restoreWaterVoidNames = [];
     private string waterVoidName = "";
-    private readonly Dictionary<string, List<List<List<string>>>> itemBlockGroups = [];
+    private readonly Dictionary<string, List<List<List<ItemBlockVariant>>>> itemBlockGroups = [];
     private readonly Dictionary<string, Dictionary<int, int>> cubePieceMapping = [];
+    private readonly Dictionary<Int3, int> groundItemHeights = [];
+    private bool groundItemHeightsValid;
 
     public SelectionMode Mode => mode;
     public bool LastRollbackFailed => lastRollbackFailed;
@@ -192,6 +202,7 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         Metadata<List<ItemBlock>>.For(Map, out var stored, name: "Atlas_ItemBlocks");
         stored.Value!.Clear();
         stored.Value.AddRange(copy);
+        groundItemHeightsValid = false;
     }
 
     public IList<ItemBlock> GetItemBlockList()
@@ -215,10 +226,10 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         foreach (var coord in copy) stored.Value.Add(coord);
     }
 
-    public void SetItemBlockGroup(string family, List<List<List<string>>> variants) => itemBlockGroups[family] = variants;
+    public void SetItemBlockGroup(string family, List<List<List<ItemBlockVariant>>> variants) => itemBlockGroups[family] = variants;
 
-    public void SetLayeredItemBlockGroup(string family, List<List<List<string>>> bottom,
-        List<List<List<string>>> middle, List<List<List<string>>> top)
+    public void SetLayeredItemBlockGroup(string family, List<List<List<ItemBlockVariant>>> bottom,
+        List<List<List<ItemBlockVariant>>> middle, List<List<List<ItemBlockVariant>>> top)
     {
         SetItemBlockGroup(family + "#bottom", bottom);
         SetItemBlockGroup(family + "#middle", middle);
@@ -258,13 +269,25 @@ public class AtlasEngine : CMapEditorPlugin, ILib
 
     public int GetFakeGroundHeight(int x, int z)
     {
+        if (!groundItemHeightsValid)
+        {
+            groundItemHeights.Clear();
+            foreach (var block in GetItemBlockList())
+            {
+                if (!block.Ground) continue;
+                for (var cellX = block.MacroblockCoord.X; cellX < block.MacroblockCoord.X + Math.Max(1, block.Width); cellX++)
+                for (var cellZ = block.MacroblockCoord.Z; cellZ < block.MacroblockCoord.Z + Math.Max(1, block.Depth); cellZ++)
+                {
+                    var cell = new Int3(cellX, 0, cellZ);
+                    if (!groundItemHeights.ContainsKey(cell) || groundItemHeights[cell] < block.MacroblockCoord.Y)
+                        groundItemHeights[cell] = block.MacroblockCoord.Y;
+                }
+            }
+            groundItemHeightsValid = true;
+        }
         var height = GetGroundHeight(x, z);
-        foreach (var block in GetItemBlockList())
-            if (block.Ground && x >= block.MacroblockCoord.X &&
-                x < block.MacroblockCoord.X + Math.Max(1, block.Width) &&
-                z >= block.MacroblockCoord.Z &&
-                z < block.MacroblockCoord.Z + Math.Max(1, block.Depth) &&
-                block.MacroblockCoord.Y > height) height = block.MacroblockCoord.Y;
+        var key = new Int3(x, 0, z);
+        if (groundItemHeights.ContainsKey(key) && groundItemHeights[key] > height) height = groundItemHeights[key];
         return height;
     }
 
@@ -284,6 +307,12 @@ public class AtlasEngine : CMapEditorPlugin, ILib
             CustomSelectionRGB = new Vec3(0.55f, 0.30f, 0.10f);
         }
         else ClearSelection();
+    }
+
+    public void SetSelectionChangeEventsEnabled(bool enabled)
+    {
+        emitSelectionChanged = enabled;
+        if (!enabled) selectionChanged.Clear();
     }
 
     private List<Int3> GetWaterSelectionCoords(IList<Int3> coords)
@@ -321,6 +350,8 @@ public class AtlasEngine : CMapEditorPlugin, ILib
 
     public void Initialize()
     {
+        groundItemHeightsValid = false;
+        emitSelectionChanged = true;
         previousItems.Clear();
         foreach (var item in Items) previousItems.Add(item.Position);
         DrawSelection();
@@ -357,14 +388,18 @@ public class AtlasEngine : CMapEditorPlugin, ILib
             var towerEnd = new Int3(cursorCoord.X + Math.Max(1, towerWidth) - 1, cursorCoord.Y,
                 cursorCoord.Z + Math.Max(1, towerDepth) - 1);
             var towerCoords = BuildSelection(cursorCoord, towerEnd, SelectionMode.Tower);
-            DrawPreview(towerCoords);
-            if (SelectionChangedSinceLastEvent(towerCoords))
-                selectionChanged.Add(new SelectionChange { Start = cursorCoord, End = towerEnd, Coords = towerCoords });
-            if (pressed && !previousMouseDown)
+            if (pressed)
             {
-                selectionConfirmed.Add(new SelectionChange { Start = cursorCoord, End = towerEnd, Coords = towerCoords });
-                SetCurrentSelection(towerCoords, true);
+                if (SelectionChangedSinceLastEvent(towerCoords))
+                {
+                    if (emitSelectionChanged)
+                        selectionChanged.Add(new SelectionChange { Start = cursorCoord, End = towerEnd, Coords = towerCoords });
+                    DrawPreview(towerCoords);
+                }
+                if (!previousMouseDown)
+                    selectionConfirmed.Add(new SelectionChange { Start = cursorCoord, End = towerEnd, Coords = towerCoords });
             }
+            else if (previousMouseDown) ClearSelection();
             previousMouseDown = pressed;
             return;
         }
@@ -380,15 +415,18 @@ public class AtlasEngine : CMapEditorPlugin, ILib
             var change = new SelectionChange { Start = dragStart, End = cursorCoord, Coords = coords };
             if (pressed)
             {
-                if (SelectionChangedSinceLastEvent(coords)) selectionChanged.Add(change);
-                DrawPreview(coords);
+                if (SelectionChangedSinceLastEvent(coords))
+                {
+                    if (emitSelectionChanged) selectionChanged.Add(change);
+                    DrawPreview(coords);
+                }
             }
             else
             {
                 selectionConfirmed.Add(change);
                 if (mode == SelectionMode.RemoveWater) RemoveWater(dragStart, cursorCoord);
                 else if (mode == SelectionMode.RestoreWater) RestoreWater(coords);
-                else SetCurrentSelection(coords, true);
+                else ClearSelection();
                 dragging = false;
             }
         }
@@ -399,10 +437,12 @@ public class AtlasEngine : CMapEditorPlugin, ILib
     private void DrawPreview(IList<Int3> coords)
     {
         CustomSelectionCoords.Clear();
+        var shown = new Dictionary<Int3, bool>();
         if (selectionVisible)
-            foreach (var coord in currentSelection) CustomSelectionCoords.Add(coord);
+            foreach (var coord in currentSelection)
+            { CustomSelectionCoords.Add(coord); shown[coord] = true; }
         foreach (var coord in coords)
-            if (!CustomSelectionCoords.Contains(coord)) CustomSelectionCoords.Add(coord);
+            if (!shown.ContainsKey(coord)) CustomSelectionCoords.Add(coord);
         ShowCustomSelection();
     }
 
@@ -450,10 +490,7 @@ public class AtlasEngine : CMapEditorPlugin, ILib
             if (selectionMode == SelectionMode.Ground2D || selectionMode == SelectionMode.RemoveWater ||
                 selectionMode == SelectionMode.RestoreWater)
             {
-                var y = GetRealGroundHeight(x, z);
-                if (selectionMode == SelectionMode.Ground2D) y = GetFakeGroundHeight(x, z);
-                else if (selectionMode == SelectionMode.RemoveWater || selectionMode == SelectionMode.RestoreWater)
-                    y = CollectionGroundY;
+                var y = selectionMode == SelectionMode.Ground2D ? GetFakeGroundHeight(x, z) : CollectionGroundY;
                 result.Add(new Int3(x, y, z));
             }
             else if (selectionMode == SelectionMode.Plane2D) result.Add(new Int3(x, start.Y, z));
@@ -468,7 +505,7 @@ public class AtlasEngine : CMapEditorPlugin, ILib
                 }
                 else if (selectionMode == SelectionMode.BoxToGround)
                 {
-                    if (GetFakeGroundHeight(x, z) != groundForBox) return new List<Int3>();
+                    if (bottom != groundForBox) return new List<Int3>();
                     bottom = groundForBox;
                 }
                 if (selectionMode == SelectionMode.Tower) top = Math.Max(start.Y, end.Y);
@@ -674,6 +711,7 @@ public class AtlasEngine : CMapEditorPlugin, ILib
             ItemPosition = position, Ground = ground, Family = family, PieceIndex = pieceIndex,
             Width = width, Depth = depth
         });
+        groundItemHeightsValid = false;
         SnapshotItems();
         return true;
     }
@@ -836,19 +874,54 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         return RotateMask(mask, DirectionToIndex(direction));
     }
 
-    private string VariantFor(string family, int piece, bool ground, Int3 coord)
+    private ItemBlockVariant VariantFor(string family, int piece, bool ground, Int3 coord)
     {
-        if (!itemBlockGroups.ContainsKey(family)) return "";
+        if (!itemBlockGroups.ContainsKey(family)) return new ItemBlockVariant { MacroblockName = "" };
         var layers = itemBlockGroups[family];
         var layer = 0;
         if (ground) layer = 1;
-        if (layer >= layers.Count || piece < 0 || piece >= layers[layer].Count) return "";
+        if (layer >= layers.Count || piece < 0 || piece >= layers[layer].Count)
+            return new ItemBlockVariant { MacroblockName = "" };
         var variants = layers[layer][piece];
-        if (variants.Count == 0) return "";
+        if (variants.Count == 0) return new ItemBlockVariant { MacroblockName = "" };
         var seed = (coord.X * 31 + coord.Y * 17 + coord.Z * 13) % variants.Count;
         if (seed < 0) seed += variants.Count;
         return variants[seed];
     }
+
+    private int DirectionOffsetFor(ItemBlock block)
+    {
+        if (!itemBlockGroups.ContainsKey(block.Family) || block.PieceIndex < 0) return 0;
+        var layers = itemBlockGroups[block.Family];
+        var layer = 0;
+        if (block.Ground) layer = 1;
+        if (layer >= layers.Count || block.PieceIndex >= layers[layer].Count) return 0;
+        foreach (var variant in layers[layer][block.PieceIndex])
+            if (variant.MacroblockName == block.MacroblockName) return variant.DirectionOffset;
+        return 0;
+    }
+
+    private static CardinalDirections OffsetDirection(CardinalDirections direction, int offset)
+    {
+        var index = (DirectionToIndex(direction) + offset) % 4;
+        if (index < 0) index += 4;
+        return DirectionFromIndex(index);
+    }
+
+    private CardinalDirections LogicalDirectionFor(ItemBlock block) =>
+        OffsetDirection(DirectionFromIndex(block.MacroblockDir), -DirectionOffsetFor(block));
+
+    private static int FreeformModelDirectionOffset(int piece)
+    {
+        // The freeform pieces use different model-facing axes for these four shapes.
+        // Keep topology and overlap directions logical; convert only at the model boundary.
+        if (piece == 0 || piece == 1) return 2;
+        if (piece == 11 || piece == 12) return -1;
+        return 0;
+    }
+
+    private CardinalDirections LogicalFreeformDirectionFor(ItemBlock block) =>
+        OffsetDirection(LogicalDirectionFor(block), -FreeformModelDirectionOffset(block.PieceIndex));
 
     private bool WithinMap(Int3 coord) => coord.X >= 0 && coord.Z >= 0 && coord.Y >= 0 &&
         coord.X < Map.Size.X && coord.Z < Map.Size.Z && coord.Y < Map.Size.Y;
@@ -857,65 +930,132 @@ public class AtlasEngine : CMapEditorPlugin, ILib
     {
         lastRollbackFailed = false;
         if (plan.Count == 0) return false;
-        var previous = new List<ItemBlock>();
-        var additions = new List<Placement>();
         Metadata<List<ItemBlock>>.For(Map, out var storedBlocks, name: "Atlas_ItemBlocks");
+        var existing = storedBlocks.Value!;
+        var existingByCell = new Dictionary<Int3, List<int>>();
+        for (var index = 0; index < existing.Count; index++)
+        {
+            var block = existing[index];
+            for (var x = block.MacroblockCoord.X; x < block.MacroblockCoord.X + Math.Max(1, block.Width); x++)
+            for (var z = block.MacroblockCoord.Z; z < block.MacroblockCoord.Z + Math.Max(1, block.Depth); z++)
+            {
+                var cell = new Int3(x, block.MacroblockCoord.Y, z);
+                if (!existingByCell.ContainsKey(cell)) existingByCell[cell] = new List<int>();
+                existingByCell[cell].Add(index);
+            }
+        }
+        var plannedCells = new Dictionary<Int3, bool>();
+        var removedIndices = new Dictionary<int, bool>();
         foreach (var entry in plan)
         {
             if (!WithinMap(entry.Coord) || GetMacroblockModelFromFilePath(entry.MacroblockName) == null) return false;
-            foreach (var other in additions)
-                if (FootprintsOverlap(entry, other)) return false;
-            additions.Add(entry);
             var width = Math.Max(1, entry.Width);
             var depth = Math.Max(1, entry.Depth);
             for (var x = entry.Coord.X; x < entry.Coord.X + width; x++)
             for (var z = entry.Coord.Z; z < entry.Coord.Z + depth; z++)
-                if (!WithinMap(new Int3(x, entry.Coord.Y, z))) return false;
-            foreach (var block in storedBlocks.Value!)
             {
-                if (!ItemBlockFootprintsOverlap(block, entry)) continue;
-                if (block.Family != entry.Family) return false;
-                if (SameCoord(block.MacroblockCoord, entry.Coord) &&
-                    block.MacroblockName == entry.MacroblockName && block.MacroblockDir == DirectionToIndex(entry.Direction))
-                    continue;
-                if (IndexOfItemBlock(previous, block) < 0) previous.Add(block);
+                var cell = new Int3(x, entry.Coord.Y, z);
+                if (!WithinMap(cell) || plannedCells.ContainsKey(cell)) return false;
+                plannedCells[cell] = true;
+                if (!existingByCell.ContainsKey(cell)) continue;
+                foreach (var index in existingByCell[cell])
+                {
+                    var block = existing[index];
+                    if (block.Family != entry.Family) return false;
+                    if (SameCoord(block.MacroblockCoord, entry.Coord) &&
+                        block.MacroblockName == entry.MacroblockName && block.MacroblockDir == DirectionToIndex(entry.Direction))
+                        continue;
+                    removedIndices[index] = true;
+                }
             }
         }
         var removed = new List<ItemBlock>();
-        foreach (var block in previous)
+        for (var index = 0; index < existing.Count; index++)
         {
-            var index = IndexOfItemBlock(storedBlocks.Value!, block);
-            if (index < 0) { RestoreRemoved(removed); return false; }
+            if (!removedIndices.ContainsKey(index)) continue;
+            var block = existing[index];
             var model = GetMacroblockModelFromFilePath(block.MacroblockName);
             if (model == null || !RemoveMacroblock(model, block.MacroblockCoord, DirectionFromIndex(block.MacroblockDir)))
             {
-                RestoreRemoved(removed);
+                RollbackPlacementPlan(removed, new List<ItemBlock>());
                 return false;
             }
-            SetItemBlockList(WithoutItemBlockAt(storedBlocks.Value!, index));
             removed.Add(block);
         }
-        var placed = new List<Placement>();
-        foreach (var entry in additions)
+        var placed = new List<ItemBlock>();
+        foreach (var entry in plan)
         {
             var alreadyThere = false;
-            foreach (var block in GetItemBlockList())
-                if (SameCoord(block.MacroblockCoord, entry.Coord) && block.MacroblockName == entry.MacroblockName &&
-                    block.MacroblockDir == DirectionToIndex(entry.Direction)) alreadyThere = true;
+            if (existingByCell.ContainsKey(entry.Coord))
+                foreach (var index in existingByCell[entry.Coord])
+                {
+                    var block = existing[index];
+                    if (!removedIndices.ContainsKey(index) && SameCoord(block.MacroblockCoord, entry.Coord) &&
+                        block.MacroblockName == entry.MacroblockName && block.MacroblockDir == DirectionToIndex(entry.Direction))
+                        alreadyThere = true;
+                }
             if (alreadyThere) continue;
-            if (!PlaceItemBlockWithFootprint(entry.MacroblockName, entry.Coord, entry.Direction, entry.Ground,
-                    entry.Family, entry.PieceIndex, entry.Width, entry.Depth))
+            var model = GetMacroblockModelFromFilePath(entry.MacroblockName);
+            if (model == null || !CanPlaceMacroblock_NoDestruction(model, entry.Coord, entry.Direction))
             {
-                foreach (var newBlock in placed)
-                    if (RemoveItemBlocks(newBlock.Coord, newBlock.MacroblockName,
-                            DirectionToIndex(newBlock.Direction)) == 0) lastRollbackFailed = true;
-                RestoreRemoved(removed);
+                RollbackPlacementPlan(removed, placed);
                 return false;
             }
-            placed.Add(entry);
+            var previousCount = Items.Count;
+            if (!PlaceMacroblock_NoDestruction(model, entry.Coord, entry.Direction))
+            {
+                RollbackPlacementPlan(removed, placed);
+                return false;
+            }
+            var position = Items.Count > previousCount ? Items[previousCount].Position : GetVec3FromCoord(entry.Coord);
+            placed.Add(new ItemBlock
+            {
+                MacroblockName = entry.MacroblockName, MacroblockCoord = entry.Coord,
+                MacroblockDir = DirectionToIndex(entry.Direction), ItemPosition = position,
+                Ground = entry.Ground, Family = entry.Family, PieceIndex = entry.PieceIndex,
+                Width = entry.Width, Depth = entry.Depth
+            });
+        }
+        if (removed.Count > 0 || placed.Count > 0)
+        {
+            var updated = new List<ItemBlock>();
+            for (var index = 0; index < existing.Count; index++)
+                if (!removedIndices.ContainsKey(index)) updated.Add(existing[index]);
+            foreach (var block in placed) updated.Add(block);
+            SetItemBlockList(updated);
+            SnapshotItems();
+        }
+        return true;
+    }
+
+    private void RollbackPlacementPlan(IList<ItemBlock> removed, IList<ItemBlock> placed)
+    {
+        // Metadata still describes the original layout until the whole plan succeeds.
+        var failedToRemove = new List<ItemBlock>();
+        for (var index = placed.Count - 1; index >= 0; index--)
+        {
+            var block = placed[index];
+            var model = GetMacroblockModelFromFilePath(block.MacroblockName);
+            if (model == null || !RemoveMacroblock(model, block.MacroblockCoord, DirectionFromIndex(block.MacroblockDir)))
+            { failedToRemove.Add(block); lastRollbackFailed = true; }
+        }
+        var failedToRestore = new List<ItemBlock>();
+        foreach (var block in removed)
+        {
+            var model = GetMacroblockModelFromFilePath(block.MacroblockName);
+            if (model == null || !PlaceMacroblock_NoDestruction(model, block.MacroblockCoord,
+                    DirectionFromIndex(block.MacroblockDir)))
+            { failedToRestore.Add(block); lastRollbackFailed = true; }
+        }
+        if (lastRollbackFailed)
+        {
+            var updated = new List<ItemBlock>();
+            foreach (var block in GetItemBlockList())
+                if (IndexOfItemBlock(failedToRestore, block) < 0) updated.Add(block);
+            foreach (var block in failedToRemove) updated.Add(block);
+            SetItemBlockList(updated);
         }
         SnapshotItems();
-        return true;
     }
 
     private static bool InsideFootprint(Int3 coord, Placement placement) =>
@@ -1054,7 +1194,7 @@ public class AtlasEngine : CMapEditorPlugin, ILib
             {
                 if (!SameCoord(old.MacroblockCoord, coords[i])) continue;
                 if (old.Family != family) return new List<Placement>();
-                var oldMask = MaskForRoadPiece(old.PieceIndex, DirectionFromIndex(old.MacroblockDir));
+                var oldMask = MaskForRoadPiece(old.PieceIndex, LogicalDirectionFor(old));
                 if (HasSide(oldMask, 1)) masks[i] = AddSide(masks[i], 1);
                 if (HasSide(oldMask, 2)) masks[i] = AddSide(masks[i], 2);
                 if (HasSide(oldMask, 4)) masks[i] = AddSide(masks[i], 4);
@@ -1063,9 +1203,10 @@ public class AtlasEngine : CMapEditorPlugin, ILib
             var ground = coords[i].Y == GetFakeGroundHeight(coords[i].X, coords[i].Z);
             var piece = RoadPieceForMask(masks[i]);
             var variant = VariantFor(family, piece, ground, coords[i]);
-            if (variant == "") return new List<Placement>();
-            result.Add(new Placement { Coord = coords[i], MacroblockName = variant,
-                Direction = RoadDirectionForMask(masks[i]), Ground = ground, Family = family, PieceIndex = piece });
+            if (variant.MacroblockName == "") return new List<Placement>();
+            result.Add(new Placement { Coord = coords[i], MacroblockName = variant.MacroblockName,
+                Direction = OffsetDirection(RoadDirectionForMask(masks[i]), variant.DirectionOffset),
+                Ground = ground, Family = family, PieceIndex = piece });
         }
         return result;
     }
@@ -1082,27 +1223,173 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         if (oldPiece == 11 && newPiece == 11 && perpendicular)
         { result.Piece = 4; result.Priority = 3; }
         else if (((oldPiece == 10 && newPiece == 9) || (oldPiece == 9 && newPiece == 10)) && opposite)
-        { result.Piece = 3; result.Priority = 3; }
-        else if (oldPiece == 9 && newPiece == 9 && opposite)
-        { result.Piece = 2; result.Priority = 3; }
+        {
+            result.Piece = 3;
+            result.Direction = oldPiece == 10 ? oldDirection : newDirection;
+            result.Priority = 3;
+        }
         else if ((oldPiece == 5 && (newPiece == 11 || newPiece == 12)) ||
                  ((oldPiece == 11 || oldPiece == 12) && newPiece == 5))
         { result.Piece = 1; result.Priority = 3; }
-        else if (oldPiece == 9 && newPiece == 9 && perpendicular)
-        { result.Piece = 0; result.Priority = 2; }
         else if (oldPiece == 12 && newPiece == 12 && !perpendicular)
         { result.Piece = 11; result.Priority = 2; }
         else if (oldPiece == 12 && newPiece == 12 && perpendicular)
-        { result.Piece = 10; result.Priority = 2; }
+        {
+            result.Piece = 10;
+            result.Direction = difference == 1 ? oldDirection : newDirection;
+            result.Priority = 2;
+        }
         else if (oldPiece == 12 && newPiece == 11 && perpendicular)
         { result.Piece = 8; result.Priority = 2; }
         else if (oldPiece == 9 && newPiece == 12 && perpendicular)
         {
-            result.Piece = 6;
-            if (difference == 3) result.Piece = 7;
+            result.Piece = 7;
+            if (difference == 3) result.Piece = 6;
             result.Priority = 2;
         }
         return result;
+    }
+
+    private static CardinalDirections DirectionForDiagonalMask(int mask, int northMask)
+    {
+        for (var turn = 0; turn < 4; turn++)
+            if (RotateMask(northMask, turn) == mask) return DirectionFromIndex(turn);
+        return CardinalDirections.North;
+    }
+
+    private static FreeformCandidate ResolveFreeformTopology(Dictionary<Int3, bool> occupied, Int3 coord, bool hasFiller)
+    {
+        var mask = 0;
+        if (occupied.ContainsKey(new Int3(coord.X, coord.Y, coord.Z - 1))) mask += 1;
+        if (occupied.ContainsKey(new Int3(coord.X + 1, coord.Y, coord.Z))) mask += 2;
+        if (occupied.ContainsKey(new Int3(coord.X, coord.Y, coord.Z + 1))) mask += 4;
+        if (occupied.ContainsKey(new Int3(coord.X - 1, coord.Y, coord.Z))) mask += 8;
+        var missingDiagonals = 0;
+        if (!occupied.ContainsKey(new Int3(coord.X - 1, coord.Y, coord.Z - 1))) missingDiagonals += 1;
+        if (!occupied.ContainsKey(new Int3(coord.X + 1, coord.Y, coord.Z - 1))) missingDiagonals += 2;
+        if (!occupied.ContainsKey(new Int3(coord.X + 1, coord.Y, coord.Z + 1))) missingDiagonals += 4;
+        if (!occupied.ContainsKey(new Int3(coord.X - 1, coord.Y, coord.Z + 1))) missingDiagonals += 8;
+
+        var sides = 0;
+        if (HasSide(mask, 1)) sides++;
+        if (HasSide(mask, 2)) sides++;
+        if (HasSide(mask, 4)) sides++;
+        if (HasSide(mask, 8)) sides++;
+        var direction = RoadDirectionForMask(mask);
+        var piece = 13; // Isolated cross.
+        if (sides == 1) piece = 12; // Line end.
+        else if (sides == 2)
+        {
+            if (mask == 5 || mask == 10) piece = 11;
+            else
+            {
+                var normalized = RotateMask(missingDiagonals, (4 - DirectionToIndex(direction)) % 4);
+                piece = HasSide(normalized, 2) ? 10 : 9; // Open or filled inner corner.
+            }
+        }
+        else if (sides == 3)
+        {
+            var normalized = RotateMask(missingDiagonals, (4 - DirectionToIndex(direction)) % 4);
+            var missingLeft = HasSide(normalized, 1);
+            var missingRight = HasSide(normalized, 2);
+            piece = 5;
+            if (missingLeft && missingRight) piece = 8;
+            else if (missingLeft) piece = 6;
+            else if (missingRight) piece = 7;
+        }
+        else if (sides == 4)
+        {
+            // Each missing diagonal leaves one exposed corner of an otherwise surrounded cell.
+            if (missingDiagonals == 0) piece = hasFiller ? 14 : 4;
+            else if (missingDiagonals == 15) piece = 4;
+            else
+            {
+                var missingCount = 0;
+                if (HasSide(missingDiagonals, 1)) missingCount++;
+                if (HasSide(missingDiagonals, 2)) missingCount++;
+                if (HasSide(missingDiagonals, 4)) missingCount++;
+                if (HasSide(missingDiagonals, 8)) missingCount++;
+                if (missingCount == 1)
+                {
+                    piece = 0;
+                    direction = DirectionForDiagonalMask(missingDiagonals, 1);
+                }
+                else if (missingCount == 2 && (missingDiagonals == 5 || missingDiagonals == 10))
+                {
+                    piece = 2;
+                    direction = DirectionForDiagonalMask(missingDiagonals, 5);
+                }
+                else if (missingCount == 2)
+                {
+                    piece = 1;
+                    direction = DirectionForDiagonalMask(missingDiagonals, 3);
+                }
+                else
+                {
+                    piece = 3;
+                    direction = DirectionForDiagonalMask(missingDiagonals, 7);
+                }
+            }
+        }
+        return new FreeformCandidate { Piece = piece, Direction = direction };
+    }
+
+    private static bool IsFreeformBase(int piece) => piece >= 0 && (piece <= 4 || piece == 14);
+
+    private static int FreeformSideCount(int piece)
+    {
+        if (IsFreeformBase(piece)) return 4;
+        if (piece >= 5 && piece <= 8) return 3;
+        if (piece >= 9 && piece <= 11) return 2;
+        if (piece == 12) return 1;
+        return 0;
+    }
+
+    private static FreeformCandidate ResolveFreeformRectanglePiece(Int3 coord, int minX, int maxX, int minZ, int maxZ)
+    {
+        var piece = 13;
+        var direction = CardinalDirections.North;
+        if (maxX > minX && maxZ == minZ)
+        {
+            piece = 11;
+            direction = CardinalDirections.East;
+            if (coord.X == minX || coord.X == maxX)
+            {
+                piece = 12;
+                var inward = coord.X == minX ? 2 : 8;
+                direction = RoadDirectionForMask(15 - OppositeSide(inward));
+            }
+        }
+        else if (maxZ > minZ && maxX == minX)
+        {
+            piece = 11;
+            if (coord.Z == minZ || coord.Z == maxZ)
+            {
+                piece = 12;
+                var inward = coord.Z == minZ ? 4 : 1;
+                direction = RoadDirectionForMask(15 - OppositeSide(inward));
+            }
+        }
+        else if (maxX > minX && maxZ > minZ)
+        {
+            if ((coord.X == minX || coord.X == maxX) && (coord.Z == minZ || coord.Z == maxZ))
+            {
+                piece = 9;
+                var mask = 0;
+                if (coord.X == minX) mask += 2; else mask += 8;
+                if (coord.Z == minZ) mask += 4; else mask += 1;
+                direction = RoadDirectionForMask(mask);
+            }
+            else if (coord.X == minX || coord.X == maxX || coord.Z == minZ || coord.Z == maxZ)
+            {
+                piece = 5;
+                if (coord.X == minX) direction = CardinalDirections.East;
+                else if (coord.X == maxX) direction = CardinalDirections.West;
+                else if (coord.Z == minZ) direction = CardinalDirections.South;
+            }
+            else piece = 4;
+        }
+        return new FreeformCandidate { Piece = piece, Direction = direction };
     }
 
     public List<Placement> ResolveFreeform1x1(IList<Int3> selection, string family)
@@ -1113,92 +1400,122 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         var maxX = minX;
         var minZ = selection[0].Z;
         var maxZ = minZ;
-        var y = selection[0].Y;
+        var selectedLookup = new Dictionary<Int3, bool>();
+        var selectedByCell = new Dictionary<Int3, Int3>();
         foreach (var coord in selection)
         {
-            if (!WithinMap(coord) || coord.Y != y || coord.Y != GetFakeGroundHeight(coord.X, coord.Z)) return new List<Placement>();
+            if (!WithinMap(coord) || coord.Y != GetFakeGroundHeight(coord.X, coord.Z)) return new List<Placement>();
+            var cell = new Int3(coord.X, 0, coord.Z);
+            if (selectedByCell.ContainsKey(cell)) return result;
+            selectedByCell[cell] = coord;
+            selectedLookup[coord] = true;
             minX = Math.Min(minX, coord.X);
             maxX = Math.Max(maxX, coord.X);
             minZ = Math.Min(minZ, coord.Z);
             maxZ = Math.Max(maxZ, coord.Z);
         }
         if (selection.Count != (maxX - minX + 1) * (maxZ - minZ + 1)) return result;
+        var selected = new List<Int3>();
         for (var x = minX; x <= maxX; x++)
         for (var z = minZ; z <= maxZ; z++)
         {
-            var coord = new Int3(x, y, z);
-            if (IndexOfCoord(selection, coord) < 0) return new List<Placement>();
-            var piece = 13;
-            var direction = CardinalDirections.North;
-            if (maxX > minX && maxZ == minZ)
+            var cell = new Int3(x, 0, z);
+            if (!selectedByCell.ContainsKey(cell)) return new List<Placement>();
+            selected.Add(selectedByCell[cell]);
+        }
+
+        // Rebuild cells beside the selection as well as cells it covers. Their visible
+        // edges change when a neighboring rectangle joins them.
+        var existing = GetItemBlockList();
+        var occupied = new Dictionary<Int3, bool>();
+        var affected = new List<Int3>();
+        var affectedLookup = new Dictionary<Int3, bool>();
+        var oldByCoord = new Dictionary<Int3, ItemBlock>();
+        var duplicateCoords = new Dictionary<Int3, bool>();
+        foreach (var coord in selected) { affected.Add(coord); affectedLookup[coord] = true; }
+        foreach (var old in existing)
+        {
+            var oldCoord = old.MacroblockCoord;
+            if (oldCoord.X >= minX - 1 && oldCoord.X <= maxX + 1 &&
+                oldCoord.Z >= minZ - 1 && oldCoord.Z <= maxZ + 1)
             {
-                piece = 11;
-                direction = CardinalDirections.East;
-                if (x == minX || x == maxX)
+                if (oldByCoord.ContainsKey(oldCoord)) duplicateCoords[oldCoord] = true;
+                else oldByCoord[oldCoord] = old;
+            }
+            if (old.Family != family || oldCoord.X < minX - 2 || oldCoord.X > maxX + 2 ||
+                oldCoord.Z < minZ - 2 || oldCoord.Z > maxZ + 2) continue;
+            var nearby = false;
+            var touchesSelection = false;
+            for (var dx = -2; dx <= 2; dx++)
+            for (var dz = -2; dz <= 2; dz++)
+            {
+                if (!selectedLookup.ContainsKey(new Int3(oldCoord.X + dx, oldCoord.Y, oldCoord.Z + dz))) continue;
+                nearby = true;
+                if (Math.Abs(dx) <= 1 && Math.Abs(dz) <= 1) touchesSelection = true;
+            }
+            if (nearby && (!old.Ground || old.Width != 1 || old.Depth != 1)) return new List<Placement>();
+            if (old.Ground && old.Width == 1 && old.Depth == 1)
+            {
+                occupied[oldCoord] = true;
+                if (touchesSelection && !affectedLookup.ContainsKey(oldCoord))
+                { affected.Add(oldCoord); affectedLookup[oldCoord] = true; }
+            }
+        }
+        foreach (var coord in selected) occupied[coord] = true;
+
+        var hasFiller = VariantFor(family, 14, true, selected[0]).MacroblockName != "";
+        foreach (var coord in affected)
+        {
+            var desired = ResolveFreeformTopology(occupied, coord, hasFiller);
+            var selectedHere = selectedLookup.ContainsKey(coord);
+            var hasOld = oldByCoord.ContainsKey(coord);
+            var oldBlock = hasOld ? oldByCoord[coord] : new ItemBlock { MacroblockName = "" };
+            if (hasOld && (oldBlock.Family != family || duplicateCoords.ContainsKey(coord)))
+                return new List<Placement>();
+            var oldLogicalDirection = CardinalDirections.North;
+            if (hasOld) oldLogicalDirection = LogicalFreeformDirectionFor(oldBlock);
+            if (selectedHere && hasOld)
+            {
+                var requested = ResolveFreeformRectanglePiece(coord, minX, maxX, minZ, maxZ);
+                // A wide rectangle joining an existing line end forms a continuous
+                // three-sided dock, even if the old line leaves both diagonals open.
+                if (oldBlock.PieceIndex == 12 && desired.Piece == 8 &&
+                    (requested.Piece == 4 || requested.Piece == 5 || requested.Piece == 9))
+                    desired.Piece = 5;
+                var overlap = ResolveFreeformOverlap(oldBlock.PieceIndex, oldLogicalDirection,
+                    requested.Piece, requested.Direction);
+                // The opposite Corner8/Corner merge keeps Corner8's orientation.
+                // Only correct the Base7 case where topology faces exactly backward.
+                if (desired.Piece == 3 && overlap.Piece == 3 &&
+                    OffsetDirection(desired.Direction, 2) == overlap.Direction)
+                    desired.Direction = OffsetDirection(desired.Direction, 2);
+                // A fully surrounded cell has enough neighbor information to pick its
+                // base shape; pairwise overlap rules only fill gaps at exposed edges.
+                if (!IsFreeformBase(desired.Piece) && overlap.Priority > 0 &&
+                    FreeformSideCount(desired.Piece) == FreeformSideCount(overlap.Piece))
                 {
-                    piece = 12;
-                    var inward = 2;
-                    if (x == maxX) inward = 8;
-                    direction = RoadDirectionForMask(15 - OppositeSide(inward));
+                    if (desired.Piece == overlap.Piece) overlap.Direction = desired.Direction;
+                    desired = overlap;
                 }
             }
-            else if (maxZ > minZ && maxX == minX)
+            if (hasOld && ((oldBlock.PieceIndex == 14 && desired.Piece != 14) ||
+                (IsFreeformBase(oldBlock.PieceIndex) && !IsFreeformBase(desired.Piece))))
+                desired = new FreeformCandidate { Piece = oldBlock.PieceIndex,
+                    Direction = oldLogicalDirection };
+            if (hasOld && oldBlock.PieceIndex == desired.Piece &&
+                oldLogicalDirection == desired.Direction)
             {
-                piece = 11;
-                direction = CardinalDirections.North;
-                if (z == minZ || z == maxZ)
-                {
-                    piece = 12;
-                    var inward = 4;
-                    if (z == maxZ) inward = 1;
-                    direction = RoadDirectionForMask(15 - OppositeSide(inward));
-                }
+                result.Add(new Placement { Coord = coord, MacroblockName = oldBlock.MacroblockName,
+                    Direction = DirectionFromIndex(oldBlock.MacroblockDir), Ground = true,
+                    Family = family, PieceIndex = oldBlock.PieceIndex, Width = 1, Depth = 1 });
+                continue;
             }
-            else if (maxX > minX && maxZ > minZ)
-            {
-                if ((x == minX || x == maxX) && (z == minZ || z == maxZ))
-                {
-                    piece = 9;
-                    var mask = 0;
-                    if (x == minX) mask += 2; else mask += 8;
-                    if (z == minZ) mask += 4; else mask += 1;
-                    direction = RoadDirectionForMask(mask);
-                }
-                else if (x == minX || x == maxX || z == minZ || z == maxZ)
-                {
-                    piece = 5;
-                    if (x == minX) direction = CardinalDirections.East;
-                    else if (x == maxX) direction = CardinalDirections.West;
-                    else if (z == minZ) direction = CardinalDirections.South;
-                }
-                else piece = 4;
-            }
-            var seenStates = new List<int>();
-            seenStates.Add(piece * 4 + DirectionToIndex(direction));
-            for (var pass = 0; pass < 8; pass++)
-            {
-                var best = new FreeformCandidate { Piece = piece, Direction = direction, Priority = 0 };
-                foreach (var old in GetItemBlockList())
-                {
-                    if (!SameCoord(old.MacroblockCoord, coord)) continue;
-                    if (old.Family != family) return new List<Placement>();
-                    var candidate = ResolveFreeformOverlap(old.PieceIndex, DirectionFromIndex(old.MacroblockDir), piece, direction);
-                    if (candidate.Priority > best.Priority) best = candidate;
-                    else if (candidate.Priority > 0 && candidate.Priority == best.Priority &&
-                             (candidate.Piece != best.Piece || candidate.Direction != best.Direction))
-                        return new List<Placement>();
-                }
-                if (best.Priority == 0 || (best.Piece == piece && best.Direction == direction)) break;
-                var state = best.Piece * 4 + DirectionToIndex(best.Direction);
-                if (seenStates.Contains(state) || pass == 7) return new List<Placement>();
-                seenStates.Add(state);
-                piece = best.Piece;
-                direction = best.Direction;
-            }
-            var variant = VariantFor(family, piece, true, coord);
-            if (variant == "") return new List<Placement>();
-            result.Add(new Placement { Coord = coord, MacroblockName = variant, Direction = direction,
-                Ground = true, Family = family, PieceIndex = piece, Width = 1, Depth = 1 });
+            var variant = VariantFor(family, desired.Piece, true, coord);
+            if (variant.MacroblockName == "") return new List<Placement>();
+            result.Add(new Placement { Coord = coord, MacroblockName = variant.MacroblockName,
+                Direction = OffsetDirection(desired.Direction,
+                    variant.DirectionOffset + FreeformModelDirectionOffset(desired.Piece)),
+                Ground = true, Family = family, PieceIndex = desired.Piece, Width = 1, Depth = 1 });
         }
         return result;
     }
@@ -1256,9 +1573,10 @@ public class AtlasEngine : CMapEditorPlugin, ILib
                 if (y == maxY) layer = family + "#top";
                 var anchor = new Int3(x, y, z);
                 var variant = VariantFor(layer, piece, y == minY, anchor);
-                if (variant == "") return new List<Placement>();
-                result.Add(new Placement { Coord = anchor, MacroblockName = variant,
-                    Direction = CardinalDirections.North, Ground = y == minY, Family = family,
+                if (variant.MacroblockName == "") return new List<Placement>();
+                result.Add(new Placement { Coord = anchor, MacroblockName = variant.MacroblockName,
+                    Direction = OffsetDirection(CardinalDirections.North, variant.DirectionOffset),
+                    Ground = y == minY, Family = family,
                     PieceIndex = piece, Width = 2, Depth = 2 });
             }
         }
@@ -1303,8 +1621,9 @@ public class AtlasEngine : CMapEditorPlugin, ILib
             if (y == minY) layer = family + "#bottom";
             if (y == maxY) layer = family + "#top";
             var variant = VariantFor(layer, 0, y == minY, anchor);
-            if (variant == "") return new List<Placement>();
-            result.Add(new Placement { Coord = anchor, MacroblockName = variant, Direction = CardinalDirections.North,
+            if (variant.MacroblockName == "") return new List<Placement>();
+            result.Add(new Placement { Coord = anchor, MacroblockName = variant.MacroblockName,
+                Direction = OffsetDirection(CardinalDirections.North, variant.DirectionOffset),
                 Ground = y == minY, Family = family, PieceIndex = 0, Width = width, Depth = depth });
         }
         return result;
@@ -1374,9 +1693,10 @@ public class AtlasEngine : CMapEditorPlugin, ILib
                 if (layerIndex == height - 1) layer = family + "#top";
                 var placedAt = new Int3(anchor.X, y, anchor.Z);
                 var variant = VariantFor(layer, piece, layerIndex == 0, placedAt);
-                if (variant == "") return new List<Placement>();
-                result.Add(new Placement { Coord = placedAt, MacroblockName = variant,
-                    Direction = direction, Ground = layerIndex == 0, Family = family,
+                if (variant.MacroblockName == "") return new List<Placement>();
+                result.Add(new Placement { Coord = placedAt, MacroblockName = variant.MacroblockName,
+                    Direction = OffsetDirection(direction, variant.DirectionOffset),
+                    Ground = layerIndex == 0, Family = family,
                     PieceIndex = piece, Width = 2, Depth = 2 });
             }
         }

@@ -41,6 +41,8 @@ As item's ground is technically not the official ground, there are two variants 
 - Real ground - decided only by map editor's `GetGroundHeight`
 - Fake ground - decided by item blocks whose `Ground` field is `True`. At a given XZ coordinate, the highest qualifying item block above real ground defines fake-ground height. If none qualifies, fake ground is real ground.
 
+Fake-ground item heights are cached by XZ footprint and rebuilt when tracked item blocks change. Real-ground height is queried live so terrain edits remain visible.
+
 ## Selection system
 
 Selection system of Atlas is fully custom based on `CustomSelectionCoords` and is colored by `CustomSelectionRGB`, so it can be unfortunately just one color at a time.
@@ -81,6 +83,8 @@ This can be done in several modes:
   - Always forming a line
 
 During the drag, each selection change should be reported back via an event. On mouse release, the final selection should be reported separately. The start and end coords should be also reported.
+
+Consumers that only need confirmation can disable selection-change events. The preview is redrawn when its coordinates change.
 
 ### Tower selection
 
@@ -263,7 +267,7 @@ This is a smaller inconvenience that is needed to ensure the editor doesn't desy
 
 Composing multiple variants of item blocks with a single placement tool requires a grouping mechanism. Such mechanism will be called **item block groups**. They are lists of macroblocks that are ordered in ways that library can successfully compose.
 
-The list is defined as `Text[][][]`, where the primary list stores up to 2 elements, first air variant list and second ground variant list (picked based on if selection is on ground or in air), second layer stores variant indices that are placed consistently, and each variant can have multiple subvariants which are purely randomized.
+The list is defined as `ItemBlockVariant[][][]`, where the primary list stores up to 2 elements, first air variant list and second ground variant list (picked based on if selection is on ground or in air), second layer stores variant indices that are placed consistently, and each variant can have multiple subvariants which are purely randomized. Each entry contains a macroblock path and a direction offset in clockwise quarter turns. An omitted offset is zero. The selected subvariant's offset is added to the model direction before placement.
 
 Selection system can be used to place such item block groups in various ways (defined below).
 
@@ -280,6 +284,8 @@ Atlas::SetItemBlockList([...]);
 ### Placement
 
 Build the complete placement plan before placing any item block so that there is no risk of partial placements.
+
+Placement uses a per-cell lookup to find affected tracked blocks. It removes and places the physical macroblocks first, then commits the tracked block list and item snapshot once. If an operation fails, it rolls back the physical changes and reconciles metadata if rollback is incomplete.
 
 A few different modes should exist to handle different placement scenarios.
 
@@ -311,6 +317,13 @@ Expected pieces ([Index] [Id]):
 - [11] Straight
 - [12] TShaped
 - [13] Cross
+- [14] Filler (optional, for the interior of larger rectangles; otherwise Base15 is used)
+
+Freeform connection directions are logical directions. The resolver converts them to
+model directions for Base1 and Base3 (+2 quarter turns) and Straight and TShaped
+(-1 quarter turn), for every freeform item block group. It reverses this conversion
+when reading tracked pieces before resolving an overlap. Variant direction offsets
+are applied separately after the core conversion.
 
 Expected rules:
 1. If only 1 coord is selected and nothing occupies it already, place Cross
@@ -323,9 +336,25 @@ Expected rules:
 8. If at least 3x2 or 2x3 is formed, Deadend should be placed between Corner
 9. If a straight line occupies another straight line that is a +1/-1 direction, Base15 should be placed
 10. If Corner8 is formed opposite to Corner on the same coord, Base7 should be placed
-11. If Corner is formed opposite to Corner on the same coord, Base5 should be placed
-12. If TShaped or Straight is "expected" to be placed on Deadend, Base3 should be placed
-13. If Corner gets expanded in one direction, it should turn into Base1
+    - If Base7's occupied-cell direction is opposite the Corner8 direction in this overlap, turn Base7 by two quarter turns to match Corner8
+11. Overlapping Corners resolve from all occupied neighboring cells: opposite diagonal gaps form Base5, while a single gap forms Base1
+12. A Base3 needs all four cardinal neighbors. Extending an existing TShaped with a wider rectangle into a three-sided cell yields Deadend; the old line's open diagonals alone must not select Deadend12
+13. Expanding a Corner with another rectangle keeps the topology result; a three-sided cell becomes a Deadend instead of an assumed Base1
+
+When a new rectangle touches or overlaps tracked pieces from the same family, resolve
+its occupied cells together with the existing footprint. Reevaluate existing cells
+within one cell of the selection, since a new cardinal or diagonal neighbor can
+change a corner, deadend, or base variant. Fully surrounded cells use the optional
+filler. Existing base variants and filler are not downgraded to an edge piece by a
+later selection.
+When the occupied-cell topology resolves a base piece, it takes precedence over
+pairwise overlap rules; for example, one missing diagonal selects Base1 even if
+two overlapping Corner directions alone would suggest Base5.
+
+Overlap orientation must be independent of placement order: two perpendicular
+TShaped pieces orient Corner8 from their combined connection sides, while an
+opposite Corner8 and Corner orient Base7 from Corner8. When the occupied-cell
+topology resolves the same piece, its direction takes precedence.
 
 #### Placement resolution system (AI generated text)
 
