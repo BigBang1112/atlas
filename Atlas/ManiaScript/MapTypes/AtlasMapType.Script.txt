@@ -2,6 +2,8 @@
 
 #Include "Libs/AtlasEngine.Script.txt" as Atlas
 
+declare Boolean G_PanelHovered;
+
 declare Dock = "Lagoon\\Z_Bay\\Z_BayDock\\Z_BayDock\\";
 declare BayBase = "Lagoon\\Z_Bay\\Z_BayDock\\A_BayBase\\";
 Atlas::SetNoItemBlockName(BayBase ^ "BaySeaBase.Macroblock.Gbx");
@@ -12,13 +14,118 @@ Atlas::Initialize();
 Atlas::SetSelectionChangeEventsEnabled(False);
 Atlas::SetSelectionMode(Atlas::C_SelectionMode_Ground2D);
 Atlas::SetFreeformPlacementMode(Atlas::C_FreeformPlacementMode_SelectionOnly);
+ManialinkText = """<manialink version="3">
+  <frame pos="91 76">
+    <quad pos="0 0" z-index="0" size="65 67" bgcolor="1112" />
+    <label pos="3 -2" z-index="2" size="59 5" text="ATLAS TOOLS" textsize="2" textcolor="fff" />
+    <label pos="3 -8" z-index="2" size="59 4" text="Select a mode, then drag in the map" textsize="1" textcolor="ccc" />
+
+    <quad pos="3 -14" z-index="1" size="28 8" bgcolor="4a80" />
+    <label id="AtlasGround" pos="4 -15" z-index="2" size="26 6" text="Ground docks" textsize="2" textcolor="fff" scriptevents="1" />
+    <quad pos="34 -14" z-index="1" size="28 8" bgcolor="4a80" />
+    <label id="AtlasPlane" pos="35 -15" z-index="2" size="26 6" text="2D plane" textsize="2" textcolor="fff" scriptevents="1" />
+
+    <quad pos="3 -24" z-index="1" size="28 8" bgcolor="4a80" />
+    <label id="AtlasBox" pos="4 -25" z-index="2" size="26 6" text="3D box" textsize="2" textcolor="fff" scriptevents="1" />
+    <quad pos="34 -24" z-index="1" size="28 8" bgcolor="4a80" />
+    <label id="AtlasLine" pos="35 -25" z-index="2" size="26 6" text="Line" textsize="2" textcolor="fff" scriptevents="1" />
+
+    <quad pos="3 -34" z-index="1" size="28 8" bgcolor="3670" />
+    <label id="AtlasRemoveWater" pos="4 -35" z-index="2" size="26 6" text="Remove water" textsize="2" textcolor="fff" scriptevents="1" />
+    <quad pos="34 -34" z-index="1" size="28 8" bgcolor="3670" />
+    <label id="AtlasRestoreWater" pos="35 -35" z-index="2" size="26 6" text="Restore water" textsize="2" textcolor="fff" scriptevents="1" />
+
+    <quad pos="3 -46" z-index="1" size="28 8" bgcolor="7540" />
+    <label id="AtlasUndo" pos="4 -47" z-index="2" size="26 6" text="Undo" textsize="2" textcolor="fff" scriptevents="1" />
+    <quad pos="34 -46" z-index="1" size="28 8" bgcolor="7540" />
+    <label id="AtlasRedo" pos="35 -47" z-index="2" size="26 6" text="Redo" textsize="2" textcolor="fff" scriptevents="1" />
+
+    <label id="AtlasStatus" pos="3 -58" z-index="2" size="59 5" text="Mode: Ground docks" textsize="1" textcolor="ccc" />
+  </frame>
+  <script><!--
+    main() {
+      declare Status <=> (Page.GetFirstChild("AtlasStatus") as CMlLabel);
+      declare Boolean WasPointerOverPanel = False;
+      while (True) {
+        yield;
+        declare Boolean PointerOverPanel = MouseX >= 91. && MouseX <= 156. && MouseY <= 76. && MouseY >= 9.;
+        if (PointerOverPanel != WasPointerOverPanel) {
+          if (PointerOverPanel) SendCustomEvent("AtlasPanelHover", ["1"]);
+          else SendCustomEvent("AtlasPanelHover", ["0"]);
+          WasPointerOverPanel = PointerOverPanel;
+        }
+        foreach (Event in PendingEvents) {
+          if (Event.Type != CMlScriptEvent::Type::MouseClick) continue;
+          if (Event.ControlId == "AtlasGround") Status.Value = "Mode: Ground docks";
+          else if (Event.ControlId == "AtlasPlane") Status.Value = "Mode: 2D plane";
+          else if (Event.ControlId == "AtlasBox") Status.Value = "Mode: 3D box";
+          else if (Event.ControlId == "AtlasLine") Status.Value = "Mode: Line";
+          else if (Event.ControlId == "AtlasRemoveWater") Status.Value = "Mode: Remove water";
+          else if (Event.ControlId == "AtlasRestoreWater") Status.Value = "Mode: Restore water";
+          SendCustomEvent("AtlasPanel", [Event.ControlId]);
+        }
+      }
+    }
+  --></script>
+</manialink>""";
 log("Atlas BayDocks ready: drag on the ground to place docks.");
 while (True) {
   yield;
+  declare PanelClicked = False;
+  foreach (Evt in PendingEvents) {
+    if (Evt.Type != CMapEditorPluginEvent::Type::LayerCustomEvent || Evt.CustomEventData.count == 0) {
+      continue;
+    }
+    if (Evt.CustomEventType == "AtlasPanelHover") {
+      G_PanelHovered = Evt.CustomEventData[0] == "1";
+      continue;
+    }
+    if (Evt.CustomEventType != "AtlasPanel") {
+      continue;
+    }
+    PanelClicked = True;
+    declare Action = Evt.CustomEventData[0];
+    if (Action == "AtlasGround") {
+      Atlas::SetSelectionMode(Atlas::C_SelectionMode_Ground2D);
+    } else if (Action == "AtlasPlane") {
+      Atlas::SetSelectionMode(Atlas::C_SelectionMode_Plane2D);
+    } else {
+      if (Action == "AtlasBox") {
+        Atlas::SetSelectionMode(Atlas::C_SelectionMode_Box3D);
+      } else if (Action == "AtlasLine") {
+        Atlas::SetSelectionMode(Atlas::C_SelectionMode_Line1D);
+      } else {
+        if (Action == "AtlasRemoveWater") {
+          Atlas::SetSelectionMode(Atlas::C_SelectionMode_RemoveWater);
+        } else if (Action == "AtlasRestoreWater") {
+          Atlas::SetSelectionMode(Atlas::C_SelectionMode_RestoreWater);
+        } else {
+          if (Action == "AtlasUndo") {
+            if (!Atlas::GetCanUndoAtlasEdit()) {
+              log("No Atlas edit to undo.");
+            } else if (!Atlas::UndoAtlasEdit()) {
+              log("Atlas undo failed.");
+            }
+          } else if (Action == "AtlasRedo") {
+            if (!Atlas::GetCanRedoAtlasEdit()) {
+              log("No Atlas edit to redo.");
+            } else if (!Atlas::RedoAtlasEdit()) {
+              log("Atlas redo failed.");
+            }
+          }
+        }
+      }
+    }
+  }
+  Atlas::SetSelectionInputEnabled(!G_PanelHovered && !PanelClicked);
   Atlas::Update();
   foreach (Change in Atlas::GetSelectionConfirmed()) {
-    if (!Atlas::PlaceFreeform1x1(Change.Coords, "BayDocks")) {
-      log("BayDocks placement failed.");
+    if (Atlas::GetMode() == Atlas::C_SelectionMode_Ground2D) {
+      if (!Atlas::PlaceFreeform1x1(Change.Coords, "BayDocks")) {
+        log("BayDocks placement failed.");
+      }
+    } else if (Atlas::GetMode() != Atlas::C_SelectionMode_RemoveWater && Atlas::GetMode() != Atlas::C_SelectionMode_RestoreWater) {
+      Atlas::SetCurrentSelection(Change.Coords, True);
     }
   }
   foreach (Removal in Atlas::GetItemRemovals()) {

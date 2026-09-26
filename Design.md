@@ -138,6 +138,16 @@ The library needs to accept the mapping of block name for the border/terrain voi
 Atlas::SetRestoreWaterBlockMapping(["LagoonGrassVoid", "LagoonBeachVoid"], "LagoonVoid");
 ```
 
+## Undo and redo
+
+Atlas keeps an in-session edit history for item block placements, item block removals,
+and water removal/restoration. `UndoAtlasEdit()` and `RedoAtlasEdit()` replay one
+complete Atlas operation and restore its metadata; `CanUndoAtlasEdit` and
+`CanRedoAtlasEdit` indicate availability. History keeps the latest 64 edits, and a
+new edit clears redo history. `ClearAtlasEditHistory()` discards history after
+external map changes or a state replacement. These methods are separate from the
+editor's native Undo/Redo commands.
+
 ## Item blocks
 
 Items have a very limited API:

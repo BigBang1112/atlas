@@ -313,6 +313,7 @@ public class AtlasMultiplayer : CMapEditorPlugin, ILib
         if (!awaitingSnapshot || snapshotRevision < 0) return false;
         Atlas.SetItemBlockList(itemBlocks);
         Atlas.SetRemovedWater(removedWater);
+        Atlas.ClearAtlasEditHistory();
         revision = snapshotRevision;
         awaitingSnapshot = false;
         return true;

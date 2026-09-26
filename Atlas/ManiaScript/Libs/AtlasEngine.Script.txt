@@ -58,6 +58,19 @@
   NoItemReplacement[] Removed;
 }
 
+#Struct AtlasEdit {
+  Integer Kind;
+  ItemBlock[] Before;
+  ItemBlock[] After;
+  NoItemReplacement[] RemovedNoItemBlocks;
+  Text NoItemBlockName;
+  Int3 Start;
+  Int3 End;
+  Int3[] WaterCoords;
+  Int3[] BeforeWater;
+  Int3[] AfterWater;
+}
+
 #Struct FreeformCandidate {
   Integer Piece;
   CMapEditorPlugin::CardinalDirections Direction;
@@ -74,11 +87,15 @@
 #Const C_SelectionMode_RestoreWater 8
 #Const C_FreeformPlacementMode_SelectionOnly 0
 #Const C_FreeformPlacementMode_ConnectExisting 1
+#Const C_AtlasEditKind_Item 0
+#Const C_AtlasEditKind_RemoveWater 1
+#Const C_AtlasEditKind_RestoreWater 2
 
 declare Int3[] G_CurrentSelection;
 declare Boolean G_SelectionVisible;
 declare Boolean G_Dragging;
 declare Boolean G_PreviousMouseDown;
+declare Boolean G_SelectionInputEnabled;
 declare Int3 G_DragStart;
 declare Integer G_Mode;
 declare Integer G_FreeformPlacementMode;
@@ -92,6 +109,10 @@ declare SelectionChange[] G_SelectionChanged;
 declare SelectionChange[] G_SelectionConfirmed;
 declare ItemRemoval[] G_ItemRemovals;
 declare Vec3[] G_PreviousItems;
+declare AtlasEdit[] G_UndoEdits;
+declare AtlasEdit[] G_RedoEdits;
+declare Boolean G_ReplayingHistory;
+declare Integer G_DeferredItemSnapshotUpdates;
 declare Text[Text] G_RemoveWaterMapping;
 declare Text[] G_RestoreWaterVoidNames;
 declare Text G_WaterVoidName;
@@ -175,6 +196,105 @@ ItemBlock[] Private_WithoutItemBlockAt(ItemBlock[] _Blocks, Integer _Index) {
   return Remaining;
 }
 
+ItemBlock[] Private_CopyItemBlocks(ItemBlock[] _Blocks) {
+  declare ItemBlock[] Copy;
+  foreach (Block in _Blocks) {
+    Copy.add(Block);
+  }
+  return Copy;
+}
+
+Int3[] Private_CopyCoords(Int3[] _Coords) {
+  declare Int3[] Copy;
+  foreach (Coord in _Coords) {
+    Copy.add(Coord);
+  }
+  return Copy;
+}
+
+Integer Private_IndexOfCoord(Int3[] _Coords, Int3 _Coord) {
+  for (I, 0, _Coords.count - 1) {
+    if (Private_SameCoord(_Coords[I], _Coord)) {
+      return I;
+    }
+  }
+  return -1;
+}
+
+Boolean Private_SameCoordLists(Int3[] _First, Int3[] _Second) {
+  if (_First.count != _Second.count) {
+    return False;
+  }
+  declare Unmatched = Private_CopyCoords(_Second);
+  foreach (Coord in _First) {
+    declare Index = Private_IndexOfCoord(Unmatched, Coord);
+    if (Index < 0) {
+      return False;
+    }
+    Unmatched.removekey(Index);
+  }
+  return True;
+}
+
+ItemBlock[] Private_ItemBlockDifference(ItemBlock[] _First, ItemBlock[] _Second) {
+  declare Unmatched = Private_CopyItemBlocks(_Second);
+  declare ItemBlock[] Result;
+  foreach (Block in _First) {
+    declare Index = Private_IndexOfItemBlock(Unmatched, Block);
+    if (Index < 0) {
+      Result.add(Block);
+    } else {
+      Unmatched.removekey(Index);
+    }
+  }
+  return Result;
+}
+
+Boolean Private_SameItemBlockLists(ItemBlock[] _First, ItemBlock[] _Second) {
+  return _First.count == _Second.count && Private_ItemBlockDifference(_First, _Second).count == 0;
+}
+
+Void Private_PushUndoEdit(AtlasEdit _Edit) {
+  G_UndoEdits.add(_Edit);
+  if (G_UndoEdits.count > 64) {
+    G_UndoEdits.removekey(0);
+  }
+  G_RedoEdits.clear();
+}
+
+Void Private_RecordItemEdit(ItemBlock[] _Before, ItemBlock[] _After, NoItemReplacement[] _RemovedNoItemBlocks) {
+  if (G_ReplayingHistory || Private_SameItemBlockLists(_Before, _After)) {
+    return;
+  }
+  declare NoItemReplacement[] Placeholders;
+  foreach (Entry in _RemovedNoItemBlocks) {
+    Placeholders.add(Entry);
+  }
+  Private_PushUndoEdit(AtlasEdit { Kind = C_AtlasEditKind_Item, Before = Private_CopyItemBlocks(_Before), After = Private_CopyItemBlocks(_After), RemovedNoItemBlocks = Placeholders, NoItemBlockName = G_NoItemBlockName });
+}
+
+Int3[] GetRemovedWater() {
+  declare metadata Int3[] Atlas_RemovedWater as Stored for Map;
+  return Stored/* not Null here */;
+}
+
+Void Private_RecordWaterEdit(Integer _Kind, Int3 _Start, Int3 _End, Int3[] _Coords, Int3[] _Before) {
+  if (G_ReplayingHistory) {
+    return;
+  }
+  Private_PushUndoEdit(AtlasEdit { Kind = _Kind, Start = _Start, End = _End, WaterCoords = Private_CopyCoords(_Coords), BeforeWater = Private_CopyCoords(_Before), AfterWater = Private_CopyCoords(GetRemovedWater()) });
+}
+
+Void ClearAtlasEditHistory() {
+  G_UndoEdits.clear();
+  G_RedoEdits.clear();
+}
+
+ItemBlock[] GetItemBlockList() {
+  declare metadata ItemBlock[] Atlas_ItemBlocks as Stored for Map;
+  return Stored/* not Null here */;
+}
+
 CMapEditorPlugin::CardinalDirections DirectionFromIndex(Integer _Index) {
   if (_Index == 1) {
     return CMapEditorPlugin::CardinalDirections::East;
@@ -186,6 +306,32 @@ CMapEditorPlugin::CardinalDirections DirectionFromIndex(Integer _Index) {
     return CMapEditorPlugin::CardinalDirections::West;
   }
   return CMapEditorPlugin::CardinalDirections::North;
+}
+
+Void Private_SnapshotItems() {
+  if (G_ReplayingHistory) {
+    G_DeferredItemSnapshotUpdates = 2;
+    return;
+  }
+  G_PreviousItems.clear();
+  foreach (Item in Items) {
+    if (Item != Null) {
+      G_PreviousItems.add(Item.Position);
+    }
+  }
+}
+
+Void Private_RestoreRemoved(ItemBlock[] _Removed) {
+  declare metadata ItemBlock[] Atlas_ItemBlocks as StoredBlocks for Map;
+  foreach (Block in _Removed) {
+    declare Model = GetMacroblockModelFromFilePath(Block.MacroblockName);
+    if (Model != Null && PlaceMacroblock_NoDestruction(Model, Block.MacroblockCoord, DirectionFromIndex(Block.MacroblockDir))) {
+      StoredBlocks/* not Null here */.add(Block);
+    } else {
+      G_LastRollbackFailed = True;
+    }
+  }
+  Private_SnapshotItems();
 }
 
 Void SetItemBlockList(ItemBlock[] _Blocks) {
@@ -201,17 +347,254 @@ Void SetItemBlockList(ItemBlock[] _Blocks) {
   G_GroundItemHeightsValid = False;
 }
 
-ItemBlock[] GetItemBlockList() {
-  declare metadata ItemBlock[] Atlas_ItemBlocks as Stored for Map;
-  return Stored/* not Null here */;
+Boolean Private_WithinMap(Int3 _Coord) {
+  return _Coord.X >= 0 && _Coord.Z >= 0 && _Coord.Y >= 0 && _Coord.X < Map.Size.X && _Coord.Z < Map.Size.Z && _Coord.Y < Map.Size.Y;
 }
 
-Int3[] GetRemovedWater() {
-  declare metadata Int3[] Atlas_RemovedWater as Stored for Map;
-  return Stored/* not Null here */;
+Void Private_RestoreNoItemBlocks(NoItemReplacement[] _Removed) {
+  if (_Removed.count == 0) {
+    return;
+  }
+  declare MacroblockModel = GetMacroblockModelFromFilePath(G_NoItemBlockName);
+  if (MacroblockModel != Null) {
+    foreach (Entry in _Removed) {
+      if (!PlaceMacroblock_NoDestruction(MacroblockModel, Entry.Coord, Entry.Direction)) {
+        log("Could not restore no-item macroblock '" ^ G_NoItemBlockName ^ "' at " ^ Entry.Coord ^ ".");
+        G_LastRollbackFailed = True;
+      }
+    }
+    return;
+  }
+  declare BlockModel = GetBlockModelFromName(G_NoItemBlockName);
+  foreach (Entry in _Removed) {
+    if (BlockModel == Null || !PlaceBlock(BlockModel, Entry.Coord, Entry.Direction)) {
+      log("Could not restore no-item block '" ^ G_NoItemBlockName ^ "' at " ^ Entry.Coord ^ ".");
+      G_LastRollbackFailed = True;
+    }
+  }
+}
+
+Void Private_RollbackPlacementPlan(ItemBlock[] _Removed, ItemBlock[] _Placed, NoItemReplacement[] _RemovedNoItemBlocks) {
+  declare ItemBlock[] FailedToRemove;
+  declare Index = _Placed.count - 1;
+  while (Index >= 0) {
+    declare Block = _Placed[Index];
+    declare Model = GetMacroblockModelFromFilePath(Block.MacroblockName);
+    if (Model == Null || !RemoveMacroblock(Model, Block.MacroblockCoord, DirectionFromIndex(Block.MacroblockDir))) {
+      FailedToRemove.add(Block);
+      G_LastRollbackFailed = True;
+    }
+    Index -= 1;
+  }
+  declare ItemBlock[] FailedToRestore;
+  foreach (Block in _Removed) {
+    declare Model = GetMacroblockModelFromFilePath(Block.MacroblockName);
+    if (Model == Null || !PlaceMacroblock_NoDestruction(Model, Block.MacroblockCoord, DirectionFromIndex(Block.MacroblockDir))) {
+      FailedToRestore.add(Block);
+      G_LastRollbackFailed = True;
+    }
+  }
+  Private_RestoreNoItemBlocks(_RemovedNoItemBlocks);
+  if (G_LastRollbackFailed) {
+    declare ItemBlock[] Updated;
+    foreach (Block in GetItemBlockList()) {
+      if (Private_IndexOfItemBlock(FailedToRestore, Block) < 0) {
+        Updated.add(Block);
+      }
+    }
+    foreach (Block in FailedToRemove) {
+      Updated.add(Block);
+    }
+    SetItemBlockList(Updated);
+  }
+  Private_SnapshotItems();
+}
+
+NoItemRemoval Private_RemoveNoItemBlocks(Int3 _Coord, Integer _Width, Integer _Depth, Boolean _Ground) {
+  declare NoItemReplacement[] Removed;
+  if (!_Ground || G_NoItemBlockName == "") {
+    return NoItemRemoval { Success = True, Removed = Removed };
+  }
+  declare MacroblockModel = GetMacroblockModelFromFilePath(G_NoItemBlockName);
+  if (MacroblockModel == Null && GetBlockModelFromName(G_NoItemBlockName) == Null) {
+    log("No item block '" ^ G_NoItemBlockName ^ "' was not found.");
+    return NoItemRemoval { Success = False, Removed = Removed };
+  }
+  for (X, _Coord.X, _Coord.X + _Width - 1) {
+    for (Z, _Coord.Z, _Coord.Z + _Depth - 1) {
+      declare Cell = <X, CollectionGroundY, Z>;
+      if (MacroblockModel != Null) {
+        declare Heights = [CollectionGroundY];
+        if (_Coord.Y != CollectionGroundY) {
+          Heights.add(_Coord.Y);
+        }
+        declare RemovedAtCell = False;
+        foreach (Y in Heights) {
+          if (RemovedAtCell) {
+            break;
+          }
+          declare Candidate = <X, Y, Z>;
+          for (Direction, 0, 4 - 1) {
+            if (!RemoveMacroblock(MacroblockModel, Candidate, DirectionFromIndex(Direction))) {
+              continue;
+            }
+            Removed.add(NoItemReplacement { Coord = Candidate, Direction = DirectionFromIndex(Direction) });
+            RemovedAtCell = True;
+            break;
+          }
+        }
+        continue;
+      }
+      declare Block = GetBlock(Cell);
+      if (Block == Null || Block.BlockModel.Name != G_NoItemBlockName) {
+        continue;
+      }
+      if (!RemoveBlock(Cell)) {
+        return NoItemRemoval { Success = False, Removed = Removed };
+      }
+      declare BlockDirection = CMapEditorPlugin::CardinalDirections::North;
+      if (Block.Direction == CBlock::CardinalDirections::East) {
+        BlockDirection = CMapEditorPlugin::CardinalDirections::East;
+      } else if (Block.Direction == CBlock::CardinalDirections::South) {
+        BlockDirection = CMapEditorPlugin::CardinalDirections::South;
+      } else {
+        if (Block.Direction == CBlock::CardinalDirections::West) {
+          BlockDirection = CMapEditorPlugin::CardinalDirections::West;
+        }
+      }
+      Removed.add(NoItemReplacement { Coord = Cell, Direction = BlockDirection });
+    }
+  }
+  return NoItemRemoval { Success = True, Removed = Removed };
+}
+
+Boolean ExecutePlacementPlan(Placement[] _Plan) {
+  G_LastRollbackFailed = False;
+  if (_Plan.count == 0) {
+    return False;
+  }
+  declare metadata ItemBlock[] Atlas_ItemBlocks as StoredBlocks for Map;
+  declare Existing = StoredBlocks/* not Null here */;
+  declare Integer[][Int3] ExistingByCell;
+  for (Index, 0, Existing.count - 1) {
+    declare Block = Existing[Index];
+    for (X, Block.MacroblockCoord.X, Block.MacroblockCoord.X + MathLib::Max(1, Block.Width) - 1) {
+      for (Z, Block.MacroblockCoord.Z, Block.MacroblockCoord.Z + MathLib::Max(1, Block.Depth) - 1) {
+        declare Cell = <X, Block.MacroblockCoord.Y, Z>;
+        if (!ExistingByCell.existskey(Cell)) {
+          ExistingByCell[Cell] = [];
+        }
+        ExistingByCell[Cell].add(Index);
+      }
+    }
+  }
+  declare Boolean[Int3] PlannedCells;
+  declare Boolean[Integer] RemovedIndices;
+  foreach (Entry in _Plan) {
+    if (!Private_WithinMap(Entry.Coord) || GetMacroblockModelFromFilePath(Entry.MacroblockName) == Null) {
+      return False;
+    }
+    declare Width = MathLib::Max(1, Entry.Width);
+    declare Depth = MathLib::Max(1, Entry.Depth);
+    for (X, Entry.Coord.X, Entry.Coord.X + Width - 1) {
+      for (Z, Entry.Coord.Z, Entry.Coord.Z + Depth - 1) {
+        declare Cell = <X, Entry.Coord.Y, Z>;
+        if (!Private_WithinMap(Cell) || PlannedCells.existskey(Cell)) {
+          return False;
+        }
+        PlannedCells[Cell] = True;
+        if (!ExistingByCell.existskey(Cell)) {
+          continue;
+        }
+        foreach (Index in ExistingByCell[Cell]) {
+          declare Block = Existing[Index];
+          if (Block.Family != Entry.Family) {
+            return False;
+          }
+          if (Private_SamePlacement(Block, Entry)) {
+            continue;
+          }
+          RemovedIndices[Index] = True;
+        }
+      }
+    }
+  }
+  declare ItemBlock[] Removed;
+  for (Index, 0, Existing.count - 1) {
+    if (!RemovedIndices.existskey(Index)) {
+      continue;
+    }
+    declare Block = Existing[Index];
+    declare Model = GetMacroblockModelFromFilePath(Block.MacroblockName);
+    if (Model == Null || !RemoveMacroblock(Model, Block.MacroblockCoord, DirectionFromIndex(Block.MacroblockDir))) {
+      Private_RollbackPlacementPlan(Removed, [], []);
+      return False;
+    }
+    Removed.add(Block);
+  }
+  declare ItemBlock[] Placed;
+  declare NoItemReplacement[] RemovedNoItemBlocks;
+  foreach (Entry in _Plan) {
+    declare AlreadyThere = False;
+    if (ExistingByCell.existskey(Entry.Coord)) {
+      foreach (Index in ExistingByCell[Entry.Coord]) {
+        declare Block = Existing[Index];
+        if (!RemovedIndices.existskey(Index) && Private_SamePlacement(Block, Entry)) {
+          AlreadyThere = True;
+        }
+      }
+    }
+    if (AlreadyThere) {
+      continue;
+    }
+    declare Model = GetMacroblockModelFromFilePath(Entry.MacroblockName);
+    declare RemovalResult = Private_RemoveNoItemBlocks(Entry.Coord, MathLib::Max(1, Entry.Width), MathLib::Max(1, Entry.Depth), Entry.Ground);
+    foreach (Cell in RemovalResult.Removed) {
+      RemovedNoItemBlocks.add(Cell);
+    }
+    if (!RemovalResult.Success) {
+      Private_RollbackPlacementPlan(Removed, Placed, RemovedNoItemBlocks);
+      return False;
+    }
+    if (Model == Null || !CanPlaceMacroblock_NoDestruction(Model, Entry.Coord, Entry.Direction)) {
+      Private_RollbackPlacementPlan(Removed, Placed, RemovedNoItemBlocks);
+      return False;
+    }
+    declare PreviousCount = Items.count;
+    if (!PlaceMacroblock_NoDestruction(Model, Entry.Coord, Entry.Direction)) {
+      Private_RollbackPlacementPlan(Removed, Placed, RemovedNoItemBlocks);
+      return False;
+    }
+    declare Vec3 Position;
+    if (!G_ReplayingHistory && Items.count > PreviousCount) {
+      Position = Items[PreviousCount].Position;
+    } else {
+      Position = GetVec3FromCoord(Entry.Coord);
+    }
+    Placed.add(ItemBlock { MacroblockName = Entry.MacroblockName, MacroblockCoord = Entry.Coord, MacroblockDir = DirectionToIndex(Entry.Direction), ItemPosition = Position, Ground = Entry.Ground, Family = Entry.Family, PieceIndex = Entry.PieceIndex, Width = Entry.Width, Depth = Entry.Depth });
+  }
+  if (Removed.count > 0 || Placed.count > 0) {
+    declare Before = Private_CopyItemBlocks(Existing);
+    declare ItemBlock[] Updated;
+    for (Index, 0, Existing.count - 1) {
+      if (!RemovedIndices.existskey(Index)) {
+        Updated.add(Existing[Index]);
+      }
+    }
+    foreach (Block in Placed) {
+      Updated.add(Block);
+    }
+    SetItemBlockList(Updated);
+    Private_SnapshotItems();
+    Private_RecordItemEdit(Before, Updated, RemovedNoItemBlocks);
+  }
+  return True;
 }
 
 Void SetRemovedWater(Int3[] _Coords) {
+  if (!G_ReplayingHistory) {
+    ClearAtlasEditHistory();
+  }
   declare Int3[] Copy;
   foreach (Coord in _Coords) {
     Copy.add(Coord);
@@ -223,85 +606,57 @@ Void SetRemovedWater(Int3[] _Coords) {
   }
 }
 
-Void SetItemBlockGroup(Text _Family, ItemBlockVariant[][] _Variants) {
-  G_ItemBlockGroups[_Family] = _Variants;
-}
-
-Void SetFreeformPlacementMode(Integer _Mode) {
-  G_FreeformPlacementMode = _Mode;
-}
-
-Void SetLayeredItemBlockGroup(Text _Family, ItemBlockVariant[][] _Bottom, ItemBlockVariant[][] _Middle, ItemBlockVariant[][] _Top) {
-  SetItemBlockGroup(_Family ^ "#bottom", _Bottom);
-  SetItemBlockGroup(_Family ^ "#middle", _Middle);
-  SetItemBlockGroup(_Family ^ "#top", _Top);
-}
-
-Void SetCubePieceMapping(Text _Family, Integer[Integer] _Mapping) {
-  declare Integer[Integer] Copy;
-  foreach (EntryKey => EntryValue in _Mapping) {
-    Copy[EntryKey] = EntryValue;
-  }
-  G_CubePieceMapping[_Family] = Copy;
-}
-
-Void SetRemoveWaterBlockMapping(Text[Text] _Mapping) {
-  G_RemoveWaterMapping.clear();
-  foreach (PairKey => PairValue in _Mapping) {
-    G_RemoveWaterMapping[PairKey] = PairValue;
-  }
-}
-
-Void SetRestoreWaterBlockMapping(Text[] _VoidNames, Text _WaterVoid) {
-  G_RestoreWaterVoidNames.clear();
-  foreach (Name in _VoidNames) {
-    G_RestoreWaterVoidNames.add(Name);
-  }
-  G_WaterVoidName = _WaterVoid;
-}
-
-Void SetNoItemBlockName(Text _BlockName) {
-  G_NoItemBlockName = _BlockName;
-}
-
-Void SetTowerSelectionSize(Integer _Width, Integer _Depth) {
-  declare NextWidth = MathLib::Max(1, _Width);
-  declare NextDepth = MathLib::Max(1, _Depth);
-  if (G_TowerWidth != NextWidth || G_TowerDepth != NextDepth) {
-    Private_ResetSelectionChangeTracking();
-  }
-  G_TowerWidth = NextWidth;
-  G_TowerDepth = NextDepth;
-}
-
-Integer GetRealGroundHeight(Integer _X, Integer _Z) {
-  return GetGroundHeight(_X, _Z);
-}
-
-Integer GetFakeGroundHeight(Integer _X, Integer _Z) {
-  if (!G_GroundItemHeightsValid) {
-    G_GroundItemHeights.clear();
-    foreach (Block in GetItemBlockList()) {
-      if (!Block.Ground) {
-        continue;
-      }
-      for (CellX, Block.MacroblockCoord.X, Block.MacroblockCoord.X + MathLib::Max(1, Block.Width) - 1) {
-        for (CellZ, Block.MacroblockCoord.Z, Block.MacroblockCoord.Z + MathLib::Max(1, Block.Depth) - 1) {
-          declare Cell = <CellX, 0, CellZ>;
-          if (!G_GroundItemHeights.existskey(Cell) || G_GroundItemHeights[Cell] < Block.MacroblockCoord.Y) {
-            G_GroundItemHeights[Cell] = Block.MacroblockCoord.Y;
-          }
-        }
-      }
+Boolean Private_ApplyResolvedChangesCore(ItemBlock[] _ToRemove, Placement[] _ToPlace, Int3[] _RemovedWater) {
+  G_LastRollbackFailed = False;
+  declare ItemBlock[] Removed;
+  declare metadata ItemBlock[] Atlas_ItemBlocks as StoredBlocks for Map;
+  foreach (Block in _ToRemove) {
+    declare Index = Private_IndexOfItemBlock(StoredBlocks/* not Null here */, Block);
+    if (Index < 0) {
+      Private_RestoreRemoved(Removed);
+      return False;
     }
-    G_GroundItemHeightsValid = True;
+    declare Model = GetMacroblockModelFromFilePath(Block.MacroblockName);
+    if (Model == Null || !RemoveMacroblock(Model, Block.MacroblockCoord, DirectionFromIndex(Block.MacroblockDir))) {
+      Private_RestoreRemoved(Removed);
+      return False;
+    }
+    SetItemBlockList(Private_WithoutItemBlockAt(StoredBlocks/* not Null here */, Index));
+    Removed.add(Block);
   }
-  declare Height = GetGroundHeight(_X, _Z);
-  declare Key = <_X, 0, _Z>;
-  if (G_GroundItemHeights.existskey(Key) && G_GroundItemHeights[Key] > Height) {
-    Height = G_GroundItemHeights[Key];
+  if (_ToPlace.count > 0 && !ExecutePlacementPlan(_ToPlace)) {
+    Private_RestoreRemoved(Removed);
+    return False;
   }
-  return Height;
+  SetRemovedWater(_RemovedWater);
+  Private_SnapshotItems();
+  return True;
+}
+
+Boolean ApplyResolvedChanges(ItemBlock[] _ToRemove, Placement[] _ToPlace, Int3[] _RemovedWater) {
+  declare WasReplaying = G_ReplayingHistory;
+  if (!WasReplaying) {
+    ClearAtlasEditHistory();
+  }
+  G_ReplayingHistory = True;
+  declare Result = Private_ApplyResolvedChangesCore(_ToRemove, _ToPlace, _RemovedWater);
+  G_ReplayingHistory = WasReplaying;
+  return Result;
+}
+
+Boolean Private_ApplyItemSnapshot(ItemBlock[] _Target) {
+  declare Current = Private_CopyItemBlocks(GetItemBlockList());
+  declare ToRemove = Private_ItemBlockDifference(Current, _Target);
+  declare Placement[] ToPlace;
+  foreach (Block in Private_ItemBlockDifference(_Target, Current)) {
+    ToPlace.add(Placement { Coord = Block.MacroblockCoord, MacroblockName = Block.MacroblockName, Direction = DirectionFromIndex(Block.MacroblockDir), Ground = Block.Ground, Family = Block.Family, PieceIndex = Block.PieceIndex, Width = Block.Width, Depth = Block.Depth });
+  }
+  if (!ApplyResolvedChanges(ToRemove, ToPlace, GetRemovedWater())) {
+    return False;
+  }
+  SetItemBlockList(_Target);
+  Private_SnapshotItems();
+  return True;
 }
 
 Void Private_DrawSelection() {
@@ -329,12 +684,397 @@ Void SetCurrentSelection(Int3[] _Coords, Boolean _Visible) {
   Private_DrawSelection();
 }
 
+Boolean RestoreWater(Int3[] _Coords) {
+  G_LastRollbackFailed = False;
+  if (_Coords.count == 0) {
+    return False;
+  }
+  declare BeforeWater = Private_CopyCoords(GetRemovedWater());
+  declare Water = GetBlockModelFromName(G_WaterVoidName);
+  if (Water == Null) {
+    log("RestoreWater failed: water block '" ^ G_WaterVoidName ^ "' was not found.");
+    return False;
+  }
+  declare metadata Int3[] Atlas_RemovedWater as StoredWater for Map;
+  declare Succeeded = True;
+  declare Int3[] AvailableVoidCoords;
+  declare Int3[] SelectionCoords;
+  foreach (Coord in _Coords) {
+    if (!SelectionCoords.exists(Coord)) {
+      SelectionCoords.add(Coord);
+    }
+  }
+  foreach (Block in Blocks) {
+    if (Block == Null) {
+      continue;
+    }
+    if (G_RestoreWaterVoidNames.exists(Block.BlockModel.Name) && !AvailableVoidCoords.exists(Block.Coord)) {
+      AvailableVoidCoords.add(Block.Coord);
+    }
+  }
+  foreach (GroundCoord in SelectionCoords) {
+    declare VoidCoord = GroundCoord;
+    if (!AvailableVoidCoords.exists(VoidCoord)) {
+      VoidCoord = <GroundCoord.X, CollectionGroundY + 1, GroundCoord.Z>;
+    }
+    if (!AvailableVoidCoords.exists(VoidCoord)) {
+      continue;
+    }
+    if (!RemoveBlock(VoidCoord)) {
+      log("RestoreWater failed: could not remove configured void block at " ^ VoidCoord ^ ".");
+      Succeeded = False;
+    }
+  }
+  declare Int3[] TerrainReadyCoords;
+  foreach (GroundCoord in SelectionCoords) {
+    if (!RemoveTerrainBlocks(GroundCoord, GroundCoord)) {
+      log("RestoreWater failed: could not remove terrain at " ^ GroundCoord ^ ".");
+      Succeeded = False;
+      continue;
+    }
+    TerrainReadyCoords.add(GroundCoord);
+  }
+  foreach (GroundCoord in TerrainReadyCoords) {
+    if (!PlaceBlock(Water, GroundCoord, CMapEditorPlugin::CardinalDirections::North)) {
+      log("RestoreWater failed: could not place water at " ^ GroundCoord ^ ".");
+      Succeeded = False;
+      continue;
+    }
+    declare Int3[] RemovedMetadata;
+    foreach (StoredCoord in StoredWater/* not Null here */) {
+      if (StoredCoord.X == GroundCoord.X && StoredCoord.Z == GroundCoord.Z) {
+        RemovedMetadata.add(StoredCoord);
+      }
+    }
+    foreach (StoredCoord in RemovedMetadata) {
+      StoredWater.remove(StoredCoord);
+    }
+  }
+  if (G_RemoveWaterMapping.existskey("Beach")) {
+    declare BeachVoidName = G_RemoveWaterMapping["Beach"];
+    declare BeachVoid = GetBlockModelFromName(BeachVoidName);
+    if (BeachVoid != Null) {
+      declare Int3[] OutsideCoords;
+      foreach (Coord in SelectionCoords) {
+        declare Neighbors = [<Coord.X - 1, Coord.Y, Coord.Z>, <Coord.X + 1, Coord.Y, Coord.Z>, <Coord.X, Coord.Y, Coord.Z - 1>, <Coord.X, Coord.Y, Coord.Z + 1>, <Coord.X - 1, Coord.Y, Coord.Z - 1>, <Coord.X - 1, Coord.Y, Coord.Z + 1>, <Coord.X + 1, Coord.Y, Coord.Z - 1>, <Coord.X + 1, Coord.Y, Coord.Z + 1>, <Coord.X - 2, Coord.Y, Coord.Z - 2>, <Coord.X - 2, Coord.Y, Coord.Z + 2>, <Coord.X + 2, Coord.Y, Coord.Z - 2>, <Coord.X + 2, Coord.Y, Coord.Z + 2>];
+        foreach (Neighbor in Neighbors) {
+          declare InsideSelection = False;
+          foreach (Selected in SelectionCoords) {
+            if (Selected.X == Neighbor.X && Selected.Z == Neighbor.Z) {
+              InsideSelection = True;
+            }
+          }
+          if (!InsideSelection && !OutsideCoords.exists(Neighbor)) {
+            OutsideCoords.add(Neighbor);
+          }
+        }
+      }
+      foreach (Coord in OutsideCoords) {
+        PlaceBlock(BeachVoid, Coord, CMapEditorPlugin::CardinalDirections::North);
+      }
+    }
+  }
+  SetCurrentSelection(StoredWater/* not Null here */, True);
+  CustomSelectionRGB = <0.55, 0.30, 0.10>;
+  if (Succeeded) {
+    Private_RecordWaterEdit(C_AtlasEditKind_RestoreWater, SelectionCoords[0], SelectionCoords[0], SelectionCoords, BeforeWater);
+  } else if (!G_ReplayingHistory) {
+    ClearAtlasEditHistory();
+  }
+  return Succeeded;
+}
+
+Integer GetRealGroundHeight(Integer _X, Integer _Z) {
+  return GetGroundHeight(_X, _Z);
+}
+
 Int3[] Private_GetWaterSelectionCoords(Int3[] _Coords) {
   declare Int3[] Result;
   foreach (Coord in _Coords) {
     Result.add(<Coord.X, CollectionGroundY, Coord.Z>);
   }
   return Result;
+}
+
+Boolean RemoveWater(Int3 _Start, Int3 _End) {
+  G_LastRollbackFailed = False;
+  declare BeforeWater = Private_CopyCoords(GetRemovedWater());
+  log("RemoveWater requested: from (" ^ _Start.X ^ ", " ^ _Start.Y ^ ", " ^ _Start.Z ^ ") to (" ^ _End.X ^ ", " ^ _End.Y ^ ", " ^ _End.Z ^ ").");
+  if (TerrainBlockModels.count == 0) {
+    log("RemoveWater failed: no terrain block models are available.");
+    return False;
+  }
+  declare Terrain = TerrainBlockModels[0];
+  declare MinX = MathLib::Min(_Start.X, _End.X);
+  declare MaxX = MathLib::Max(_Start.X, _End.X);
+  declare MinZ = MathLib::Min(_Start.Z, _End.Z);
+  declare MaxZ = MathLib::Max(_Start.Z, _End.Z);
+  declare Int3[] OriginalGroundCoords;
+  for (X, MinX, MaxX) {
+    for (Z, MinZ, MaxZ) {
+      OriginalGroundCoords.add(<X, GetRealGroundHeight(X, Z), Z>);
+    }
+  }
+  if (!PlaceTerrainBlocks(Terrain, _Start, _End)) {
+    log("RemoveWater failed: could not place " ^ Terrain.Name ^ " from " ^ _Start ^ " to " ^ _End ^ ".");
+    return False;
+  }
+  declare Succeeded = True;
+  declare metadata Int3[] Atlas_RemovedWater as StoredWater for Map;
+  foreach (OriginalCoord in OriginalGroundCoords) {
+    declare Coord = <OriginalCoord.X, GetRealGroundHeight(OriginalCoord.X, OriginalCoord.Z), OriginalCoord.Z>;
+    declare Old = GetBlock(Coord);
+    if (Old == Null) {
+      log("RemoveWater failed: no block at (" ^ Coord.X ^ ", " ^ Coord.Y ^ ", " ^ Coord.Z ^ ").");
+      Succeeded = False;
+      continue;
+    }
+    if (!G_RemoveWaterMapping.existskey(Old.BlockModel.Name)) {
+      log("RemoveWater failed: block '" ^ Old.BlockModel.Name ^ "' at (" ^ Coord.X ^ ", " ^ Coord.Y ^ ", " ^ Coord.Z ^ ") has no void mapping.");
+      Succeeded = False;
+      continue;
+    }
+    declare VoidName = G_RemoveWaterMapping[Old.BlockModel.Name];
+    declare VoidBlock = GetBlockModelFromName(VoidName);
+    if (VoidBlock == Null) {
+      log("RemoveWater failed: mapped void block '" ^ VoidName ^ "' was not found.");
+      Succeeded = False;
+      continue;
+    }
+    if (!PlaceBlock(VoidBlock, Coord, CMapEditorPlugin::CardinalDirections::North)) {
+      log("RemoveWater failed: could not place void block '" ^ VoidName ^ "' at (" ^ Coord.X ^ ", " ^ Coord.Y ^ ", " ^ Coord.Z ^ ").");
+      Succeeded = False;
+      continue;
+    }
+    if (!StoredWater/* not Null here */.exists(OriginalCoord)) {
+      StoredWater.add(OriginalCoord);
+    }
+  }
+  SetCurrentSelection(Private_GetWaterSelectionCoords(StoredWater/* not Null here */), True);
+  CustomSelectionRGB = <0.55, 0.30, 0.10>;
+  if (Succeeded) {
+    Private_RecordWaterEdit(C_AtlasEditKind_RemoveWater, _Start, _End, OriginalGroundCoords, BeforeWater);
+  } else if (!G_ReplayingHistory) {
+    ClearAtlasEditHistory();
+  }
+  return Succeeded;
+}
+
+Boolean Private_ReplayWaterEdit(AtlasEdit _Edit, Boolean _Undo) {
+  if (_Edit.Kind == C_AtlasEditKind_RemoveWater) {
+    if (_Undo) {
+      return RestoreWater(_Edit.WaterCoords);
+    } else {
+      return RemoveWater(_Edit.Start, _Edit.End);
+    }
+  }
+  if (!_Undo) {
+    return RestoreWater(_Edit.WaterCoords);
+  }
+  foreach (Coord in _Edit.WaterCoords) {
+    if (!RemoveWater(Coord, Coord)) {
+      return False;
+    }
+  }
+  return True;
+}
+
+Void Private_RefreshWaterSelection() {
+  if (G_Mode == C_SelectionMode_RemoveWater) {
+    SetCurrentSelection(Private_GetWaterSelectionCoords(GetRemovedWater()), True);
+  } else if (G_Mode == C_SelectionMode_RestoreWater) {
+    SetCurrentSelection(GetRemovedWater(), True);
+  }
+}
+
+Boolean GetCanUndoAtlasEdit() {
+  return G_UndoEdits.count > 0;
+}
+
+Boolean UndoAtlasEdit() {
+  if (!GetCanUndoAtlasEdit()) {
+    return False;
+  }
+  declare Edit = G_UndoEdits[G_UndoEdits.count - 1];
+  if ((Edit.Kind == C_AtlasEditKind_Item && !Private_SameItemBlockLists(GetItemBlockList(), Edit.After)) || (Edit.Kind != C_AtlasEditKind_Item && !Private_SameCoordLists(GetRemovedWater(), Edit.AfterWater))) {
+    ClearAtlasEditHistory();
+    return False;
+  }
+  declare ConfiguredNoItemBlockName = G_NoItemBlockName;
+  if (Edit.Kind == C_AtlasEditKind_Item) {
+    G_NoItemBlockName = Edit.NoItemBlockName;
+  }
+  G_ReplayingHistory = True;
+  declare Succeeded = False;
+  if (Edit.Kind == C_AtlasEditKind_Item) {
+    Succeeded = Private_ApplyItemSnapshot(Edit.Before);
+    if (Succeeded) {
+      G_LastRollbackFailed = False;
+      log("Atlas undo: restoring " ^ Edit.RemovedNoItemBlocks.count ^ " no-item block(s).");
+      Private_RestoreNoItemBlocks(Edit.RemovedNoItemBlocks);
+      Succeeded = !G_LastRollbackFailed;
+      if (!Succeeded) {
+        Private_ApplyItemSnapshot(Edit.After);
+      } else {
+        Private_SnapshotItems();
+      }
+    }
+  } else {
+    Succeeded = Private_ReplayWaterEdit(Edit, True);
+    if (Succeeded) {
+      SetRemovedWater(Edit.BeforeWater);
+    } else if (Private_ReplayWaterEdit(Edit, False)) {
+      SetRemovedWater(Edit.AfterWater);
+    } else {
+      G_LastRollbackFailed = True;
+    }
+  }
+  G_ReplayingHistory = False;
+  if (Edit.Kind == C_AtlasEditKind_Item) {
+    G_NoItemBlockName = ConfiguredNoItemBlockName;
+  }
+  if (Edit.Kind != C_AtlasEditKind_Item) {
+    Private_RefreshWaterSelection();
+  }
+  if (!Succeeded) {
+    if (G_LastRollbackFailed) {
+      ClearAtlasEditHistory();
+    }
+    return False;
+  }
+  G_UndoEdits.removekey(G_UndoEdits.count - 1);
+  G_RedoEdits.add(Edit);
+  return True;
+}
+
+Boolean GetCanRedoAtlasEdit() {
+  return G_RedoEdits.count > 0;
+}
+
+Boolean RedoAtlasEdit() {
+  if (!GetCanRedoAtlasEdit()) {
+    return False;
+  }
+  declare Edit = G_RedoEdits[G_RedoEdits.count - 1];
+  if ((Edit.Kind == C_AtlasEditKind_Item && !Private_SameItemBlockLists(GetItemBlockList(), Edit.Before)) || (Edit.Kind != C_AtlasEditKind_Item && !Private_SameCoordLists(GetRemovedWater(), Edit.BeforeWater))) {
+    ClearAtlasEditHistory();
+    return False;
+  }
+  declare ConfiguredNoItemBlockName = G_NoItemBlockName;
+  if (Edit.Kind == C_AtlasEditKind_Item) {
+    G_NoItemBlockName = Edit.NoItemBlockName;
+  }
+  G_ReplayingHistory = True;
+  declare Boolean Succeeded;
+  if (Edit.Kind == C_AtlasEditKind_Item) {
+    Succeeded = Private_ApplyItemSnapshot(Edit.After);
+  } else {
+    Succeeded = Private_ReplayWaterEdit(Edit, False);
+  }
+  if (Edit.Kind != C_AtlasEditKind_Item) {
+    if (Succeeded) {
+      SetRemovedWater(Edit.AfterWater);
+    } else if (Private_ReplayWaterEdit(Edit, True)) {
+      SetRemovedWater(Edit.BeforeWater);
+    } else {
+      G_LastRollbackFailed = True;
+    }
+  }
+  G_ReplayingHistory = False;
+  if (Edit.Kind == C_AtlasEditKind_Item) {
+    G_NoItemBlockName = ConfiguredNoItemBlockName;
+  }
+  if (Edit.Kind != C_AtlasEditKind_Item) {
+    Private_RefreshWaterSelection();
+  }
+  if (!Succeeded) {
+    if (G_LastRollbackFailed) {
+      ClearAtlasEditHistory();
+    }
+    return False;
+  }
+  G_RedoEdits.removekey(G_RedoEdits.count - 1);
+  G_UndoEdits.add(Edit);
+  return True;
+}
+
+Void SetItemBlockGroup(Text _Family, ItemBlockVariant[][] _Variants) {
+  G_ItemBlockGroups[_Family] = _Variants;
+}
+
+Void SetFreeformPlacementMode(Integer _Mode) {
+  G_FreeformPlacementMode = _Mode;
+}
+
+Void SetLayeredItemBlockGroup(Text _Family, ItemBlockVariant[][] _Bottom, ItemBlockVariant[][] _Middle, ItemBlockVariant[][] _Top) {
+  SetItemBlockGroup(_Family ^ "#bottom", _Bottom);
+  SetItemBlockGroup(_Family ^ "#middle", _Middle);
+  SetItemBlockGroup(_Family ^ "#top", _Top);
+}
+
+Void SetCubePieceMapping(Text _Family, Integer[Integer] _Mapping) {
+  declare Integer[Integer] Copy;
+  foreach (EntryKey => EntryValue in _Mapping) {
+    Copy[EntryKey] = EntryValue;
+  }
+  G_CubePieceMapping[_Family] = Copy;
+}
+
+Void SetRemoveWaterBlockMapping(Text[Text] _Mapping) {
+  ClearAtlasEditHistory();
+  G_RemoveWaterMapping.clear();
+  foreach (PairKey => PairValue in _Mapping) {
+    G_RemoveWaterMapping[PairKey] = PairValue;
+  }
+}
+
+Void SetRestoreWaterBlockMapping(Text[] _VoidNames, Text _WaterVoid) {
+  ClearAtlasEditHistory();
+  G_RestoreWaterVoidNames.clear();
+  foreach (Name in _VoidNames) {
+    G_RestoreWaterVoidNames.add(Name);
+  }
+  G_WaterVoidName = _WaterVoid;
+}
+
+Void SetNoItemBlockName(Text _BlockName) {
+  G_NoItemBlockName = _BlockName;
+}
+
+Void SetTowerSelectionSize(Integer _Width, Integer _Depth) {
+  declare NextWidth = MathLib::Max(1, _Width);
+  declare NextDepth = MathLib::Max(1, _Depth);
+  if (G_TowerWidth != NextWidth || G_TowerDepth != NextDepth) {
+    Private_ResetSelectionChangeTracking();
+  }
+  G_TowerWidth = NextWidth;
+  G_TowerDepth = NextDepth;
+}
+
+Integer GetFakeGroundHeight(Integer _X, Integer _Z) {
+  if (!G_GroundItemHeightsValid) {
+    G_GroundItemHeights.clear();
+    foreach (Block in GetItemBlockList()) {
+      if (!Block.Ground) {
+        continue;
+      }
+      for (CellX, Block.MacroblockCoord.X, Block.MacroblockCoord.X + MathLib::Max(1, Block.Width) - 1) {
+        for (CellZ, Block.MacroblockCoord.Z, Block.MacroblockCoord.Z + MathLib::Max(1, Block.Depth) - 1) {
+          declare Cell = <CellX, 0, CellZ>;
+          if (!G_GroundItemHeights.existskey(Cell) || G_GroundItemHeights[Cell] < Block.MacroblockCoord.Y) {
+            G_GroundItemHeights[Cell] = Block.MacroblockCoord.Y;
+          }
+        }
+      }
+    }
+    G_GroundItemHeightsValid = True;
+  }
+  declare Height = GetGroundHeight(_X, _Z);
+  declare Key = <_X, 0, _Z>;
+  if (G_GroundItemHeights.existskey(Key) && G_GroundItemHeights[Key] > Height) {
+    Height = G_GroundItemHeights[Key];
+  }
+  return Height;
 }
 
 Void ClearSelection() {
@@ -369,12 +1109,31 @@ Void SetSelectionChangeEventsEnabled(Boolean _Enabled) {
   }
 }
 
+Void SetSelectionInputEnabled(Boolean _Enabled) {
+  if (G_SelectionInputEnabled == _Enabled) {
+    return;
+  }
+  G_SelectionInputEnabled = _Enabled;
+  if (_Enabled) {
+    return;
+  }
+  G_Dragging = False;
+  G_PreviousMouseDown = Input.MouseLeftButton;
+  Private_ResetSelectionChangeTracking();
+  Private_DrawSelection();
+}
+
 Void Initialize() {
+  ClearAtlasEditHistory();
+  G_DeferredItemSnapshotUpdates = 0;
+  G_SelectionInputEnabled = True;
   G_GroundItemHeightsValid = False;
   G_EmitSelectionChanged = True;
   G_PreviousItems.clear();
   foreach (Item in Items) {
-    G_PreviousItems.add(Item.Position);
+    if (Item != Null) {
+      G_PreviousItems.add(Item.Position);
+    }
   }
   Private_DrawSelection();
 }
@@ -399,18 +1158,16 @@ ItemBlock[] Private_RemoveItemBlocksAtPosition(Vec3 _Position) {
   return Removed;
 }
 
-Void Private_SnapshotItems() {
-  G_PreviousItems.clear();
-  foreach (Item in Items) {
-    G_PreviousItems.add(Item.Position);
-  }
-}
-
 Void SyncManuallyRemovedItems() {
-  if (Items.count > G_PreviousItems.count) {
-    for (I, G_PreviousItems.count, Items.count - 1) {
-      G_PreviousItems.add(Items[I].Position);
+  if (G_DeferredItemSnapshotUpdates > 0) {
+    G_DeferredItemSnapshotUpdates -= 1;
+    if (G_DeferredItemSnapshotUpdates == 0) {
+      Private_SnapshotItems();
     }
+    return;
+  }
+  if (Items.count > G_PreviousItems.count) {
+    Private_SnapshotItems();
     return;
   }
   if (Items.count == G_PreviousItems.count) {
@@ -418,6 +1175,9 @@ Void SyncManuallyRemovedItems() {
   }
   declare Integer[Vec3] Counts;
   foreach (Item in Items) {
+    if (Item == Null) {
+      continue;
+    }
     if (!Counts.existskey(Item.Position)) {
       Counts[Item.Position] = 0;
     }
@@ -436,7 +1196,8 @@ Void SyncManuallyRemovedItems() {
     I -= 1;
   }
   foreach (Position in RemovedPositions) {
-    G_ItemRemovals.add(ItemRemoval { Position = Position, RemovedBlocks = Private_RemoveItemBlocksAtPosition(Position) });
+    declare RemovedBlocks = Private_RemoveItemBlocksAtPosition(Position);
+    G_ItemRemovals.add(ItemRemoval { Position = Position, RemovedBlocks = RemovedBlocks });
   }
   Private_SnapshotItems();
 }
@@ -532,160 +1293,12 @@ Void Private_DrawPreview(Int3[] _Coords) {
   ShowCustomSelection();
 }
 
-Boolean RemoveWater(Int3 _Start, Int3 _End) {
-  G_LastRollbackFailed = False;
-  log("RemoveWater requested: from (" ^ _Start.X ^ ", " ^ _Start.Y ^ ", " ^ _Start.Z ^ ") to (" ^ _End.X ^ ", " ^ _End.Y ^ ", " ^ _End.Z ^ ").");
-  if (TerrainBlockModels.count == 0) {
-    log("RemoveWater failed: no terrain block models are available.");
-    return False;
-  }
-  declare Terrain = TerrainBlockModels[0];
-  declare MinX = MathLib::Min(_Start.X, _End.X);
-  declare MaxX = MathLib::Max(_Start.X, _End.X);
-  declare MinZ = MathLib::Min(_Start.Z, _End.Z);
-  declare MaxZ = MathLib::Max(_Start.Z, _End.Z);
-  declare Int3[] OriginalGroundCoords;
-  for (X, MinX, MaxX) {
-    for (Z, MinZ, MaxZ) {
-      OriginalGroundCoords.add(<X, GetRealGroundHeight(X, Z), Z>);
-    }
-  }
-  if (!PlaceTerrainBlocks(Terrain, _Start, _End)) {
-    log("RemoveWater failed: could not place " ^ Terrain.Name ^ " from " ^ _Start ^ " to " ^ _End ^ ".");
-    return False;
-  }
-  declare Succeeded = True;
-  declare metadata Int3[] Atlas_RemovedWater as StoredWater for Map;
-  foreach (OriginalCoord in OriginalGroundCoords) {
-    declare Coord = <OriginalCoord.X, GetRealGroundHeight(OriginalCoord.X, OriginalCoord.Z), OriginalCoord.Z>;
-    declare Old = GetBlock(Coord);
-    if (Old == Null) {
-      log("RemoveWater failed: no block at (" ^ Coord.X ^ ", " ^ Coord.Y ^ ", " ^ Coord.Z ^ ").");
-      Succeeded = False;
-      continue;
-    }
-    if (!G_RemoveWaterMapping.existskey(Old.BlockModel.Name)) {
-      log("RemoveWater failed: block '" ^ Old.BlockModel.Name ^ "' at (" ^ Coord.X ^ ", " ^ Coord.Y ^ ", " ^ Coord.Z ^ ") has no void mapping.");
-      Succeeded = False;
-      continue;
-    }
-    declare VoidName = G_RemoveWaterMapping[Old.BlockModel.Name];
-    declare VoidBlock = GetBlockModelFromName(VoidName);
-    if (VoidBlock == Null) {
-      log("RemoveWater failed: mapped void block '" ^ VoidName ^ "' was not found.");
-      Succeeded = False;
-      continue;
-    }
-    if (!PlaceBlock(VoidBlock, Coord, CMapEditorPlugin::CardinalDirections::North)) {
-      log("RemoveWater failed: could not place void block '" ^ VoidName ^ "' at (" ^ Coord.X ^ ", " ^ Coord.Y ^ ", " ^ Coord.Z ^ ").");
-      Succeeded = False;
-      continue;
-    }
-    if (!StoredWater/* not Null here */.exists(OriginalCoord)) {
-      StoredWater.add(OriginalCoord);
-    }
-  }
-  SetCurrentSelection(Private_GetWaterSelectionCoords(StoredWater/* not Null here */), True);
-  CustomSelectionRGB = <0.55, 0.30, 0.10>;
-  return Succeeded;
-}
-
-Boolean RestoreWater(Int3[] _Coords) {
-  G_LastRollbackFailed = False;
-  if (_Coords.count == 0) {
-    return False;
-  }
-  declare Water = GetBlockModelFromName(G_WaterVoidName);
-  if (Water == Null) {
-    log("RestoreWater failed: water block '" ^ G_WaterVoidName ^ "' was not found.");
-    return False;
-  }
-  declare metadata Int3[] Atlas_RemovedWater as StoredWater for Map;
-  declare Succeeded = True;
-  declare Int3[] AvailableVoidCoords;
-  declare Int3[] SelectionCoords;
-  foreach (Coord in _Coords) {
-    if (!SelectionCoords.exists(Coord)) {
-      SelectionCoords.add(Coord);
-    }
-  }
-  foreach (Block in Blocks) {
-    if (Block == Null) {
-      continue;
-    }
-    if (G_RestoreWaterVoidNames.exists(Block.BlockModel.Name) && !AvailableVoidCoords.exists(Block.Coord)) {
-      AvailableVoidCoords.add(Block.Coord);
-    }
-  }
-  foreach (GroundCoord in SelectionCoords) {
-    declare VoidCoord = GroundCoord;
-    if (!AvailableVoidCoords.exists(VoidCoord)) {
-      VoidCoord = <GroundCoord.X, CollectionGroundY + 1, GroundCoord.Z>;
-    }
-    if (!AvailableVoidCoords.exists(VoidCoord)) {
-      continue;
-    }
-    if (!RemoveBlock(VoidCoord)) {
-      log("RestoreWater failed: could not remove configured void block at " ^ VoidCoord ^ ".");
-      Succeeded = False;
-    }
-  }
-  declare Int3[] TerrainReadyCoords;
-  foreach (GroundCoord in SelectionCoords) {
-    if (!RemoveTerrainBlocks(GroundCoord, GroundCoord)) {
-      log("RestoreWater failed: could not remove terrain at " ^ GroundCoord ^ ".");
-      Succeeded = False;
-      continue;
-    }
-    TerrainReadyCoords.add(GroundCoord);
-  }
-  foreach (GroundCoord in TerrainReadyCoords) {
-    if (!PlaceBlock(Water, GroundCoord, CMapEditorPlugin::CardinalDirections::North)) {
-      log("RestoreWater failed: could not place water at " ^ GroundCoord ^ ".");
-      Succeeded = False;
-      continue;
-    }
-    declare Int3[] RemovedMetadata;
-    foreach (StoredCoord in StoredWater/* not Null here */) {
-      if (StoredCoord.X == GroundCoord.X && StoredCoord.Z == GroundCoord.Z) {
-        RemovedMetadata.add(StoredCoord);
-      }
-    }
-    foreach (StoredCoord in RemovedMetadata) {
-      StoredWater.remove(StoredCoord);
-    }
-  }
-  if (G_RemoveWaterMapping.existskey("Beach")) {
-    declare BeachVoidName = G_RemoveWaterMapping["Beach"];
-    declare BeachVoid = GetBlockModelFromName(BeachVoidName);
-    if (BeachVoid != Null) {
-      declare Int3[] OutsideCoords;
-      foreach (Coord in SelectionCoords) {
-        declare Neighbors = [<Coord.X - 1, Coord.Y, Coord.Z>, <Coord.X + 1, Coord.Y, Coord.Z>, <Coord.X, Coord.Y, Coord.Z - 1>, <Coord.X, Coord.Y, Coord.Z + 1>, <Coord.X - 1, Coord.Y, Coord.Z - 1>, <Coord.X - 1, Coord.Y, Coord.Z + 1>, <Coord.X + 1, Coord.Y, Coord.Z - 1>, <Coord.X + 1, Coord.Y, Coord.Z + 1>, <Coord.X - 2, Coord.Y, Coord.Z - 2>, <Coord.X - 2, Coord.Y, Coord.Z + 2>, <Coord.X + 2, Coord.Y, Coord.Z - 2>, <Coord.X + 2, Coord.Y, Coord.Z + 2>];
-        foreach (Neighbor in Neighbors) {
-          declare InsideSelection = False;
-          foreach (Selected in SelectionCoords) {
-            if (Selected.X == Neighbor.X && Selected.Z == Neighbor.Z) {
-              InsideSelection = True;
-            }
-          }
-          if (!InsideSelection && !OutsideCoords.exists(Neighbor)) {
-            OutsideCoords.add(Neighbor);
-          }
-        }
-      }
-      foreach (Coord in OutsideCoords) {
-        PlaceBlock(BeachVoid, Coord, CMapEditorPlugin::CardinalDirections::North);
-      }
-    }
-  }
-  SetCurrentSelection(StoredWater/* not Null here */, True);
-  CustomSelectionRGB = <0.55, 0.30, 0.10>;
-  return Succeeded;
-}
-
 Void Update() {
   SyncManuallyRemovedItems();
+  if (!G_SelectionInputEnabled) {
+    G_PreviousMouseDown = Input.MouseLeftButton;
+    return;
+  }
   declare Pressed = Input.MouseLeftButton;
   if (G_Mode == C_SelectionMode_None) {
     G_PreviousMouseDown = Pressed;
@@ -757,92 +1370,12 @@ Void Update() {
   G_PreviousMouseDown = Pressed;
 }
 
-NoItemRemoval Private_RemoveNoItemBlocks(Int3 _Coord, Integer _Width, Integer _Depth, Boolean _Ground) {
-  declare NoItemReplacement[] Removed;
-  if (!_Ground || G_NoItemBlockName == "") {
-    return NoItemRemoval { Success = True, Removed = Removed };
-  }
-  declare MacroblockModel = GetMacroblockModelFromFilePath(G_NoItemBlockName);
-  if (MacroblockModel == Null && GetBlockModelFromName(G_NoItemBlockName) == Null) {
-    log("No item block '" ^ G_NoItemBlockName ^ "' was not found.");
-    return NoItemRemoval { Success = False, Removed = Removed };
-  }
-  for (X, _Coord.X, _Coord.X + _Width - 1) {
-    for (Z, _Coord.Z, _Coord.Z + _Depth - 1) {
-      declare Cell = <X, CollectionGroundY, Z>;
-      if (MacroblockModel != Null) {
-        declare Heights = [CollectionGroundY];
-        if (_Coord.Y != CollectionGroundY) {
-          Heights.add(_Coord.Y);
-        }
-        declare RemovedAtCell = False;
-        foreach (Y in Heights) {
-          if (RemovedAtCell) {
-            break;
-          }
-          declare Candidate = <X, Y, Z>;
-          for (Direction, 0, 4 - 1) {
-            declare PreviousCount = Items.count;
-            RemoveMacroblock(MacroblockModel, Candidate, DirectionFromIndex(Direction));
-            if (Items.count >= PreviousCount) {
-              continue;
-            }
-            Removed.add(NoItemReplacement { Coord = Candidate, Direction = DirectionFromIndex(Direction) });
-            RemovedAtCell = True;
-            break;
-          }
-        }
-        continue;
-      }
-      declare Block = GetBlock(Cell);
-      if (Block == Null || Block.BlockModel.Name != G_NoItemBlockName) {
-        continue;
-      }
-      if (!RemoveBlock(Cell)) {
-        return NoItemRemoval { Success = False, Removed = Removed };
-      }
-      declare BlockDirection = CMapEditorPlugin::CardinalDirections::North;
-      if (Block.Direction == CBlock::CardinalDirections::East) {
-        BlockDirection = CMapEditorPlugin::CardinalDirections::East;
-      } else if (Block.Direction == CBlock::CardinalDirections::South) {
-        BlockDirection = CMapEditorPlugin::CardinalDirections::South;
-      } else {
-        if (Block.Direction == CBlock::CardinalDirections::West) {
-          BlockDirection = CMapEditorPlugin::CardinalDirections::West;
-        }
-      }
-      Removed.add(NoItemReplacement { Coord = Cell, Direction = BlockDirection });
-    }
-  }
-  return NoItemRemoval { Success = True, Removed = Removed };
-}
-
-Void Private_RestoreNoItemBlocks(NoItemReplacement[] _Removed) {
-  if (_Removed.count == 0) {
-    return;
-  }
-  declare MacroblockModel = GetMacroblockModelFromFilePath(G_NoItemBlockName);
-  if (MacroblockModel != Null) {
-    foreach (Entry in _Removed) {
-      if (!PlaceMacroblock_NoDestruction(MacroblockModel, Entry.Coord, Entry.Direction)) {
-        G_LastRollbackFailed = True;
-      }
-    }
-    return;
-  }
-  declare BlockModel = GetBlockModelFromName(G_NoItemBlockName);
-  foreach (Entry in _Removed) {
-    if (BlockModel == Null || !PlaceBlock(BlockModel, Entry.Coord, Entry.Direction)) {
-      G_LastRollbackFailed = True;
-    }
-  }
-}
-
 Boolean PlaceItemBlockWithFootprint(Text _MacroblockName, Int3 _Coord, CMapEditorPlugin::CardinalDirections _Direction, Boolean _Ground, Text _Family, Integer _PieceIndex, Integer _Width, Integer _Depth) {
   G_LastRollbackFailed = False;
   if (_Width < 1 || _Depth < 1) {
     return False;
   }
+  declare Before = Private_CopyItemBlocks(GetItemBlockList());
   declare Model = GetMacroblockModelFromFilePath(_MacroblockName);
   if (Model == Null) {
     return False;
@@ -871,6 +1404,7 @@ Boolean PlaceItemBlockWithFootprint(Text _MacroblockName, Int3 _Coord, CMapEdito
   StoredBlocks/* not Null here */.add(ItemBlock { MacroblockName = _MacroblockName, MacroblockCoord = _Coord, MacroblockDir = DirectionToIndex(_Direction), ItemPosition = Position, Ground = _Ground, Family = _Family, PieceIndex = _PieceIndex, Width = _Width, Depth = _Depth });
   G_GroundItemHeightsValid = False;
   Private_SnapshotItems();
+  Private_RecordItemEdit(Before, GetItemBlockList(), RemovalResult.Removed);
   return True;
 }
 
@@ -884,6 +1418,7 @@ Boolean Private_InsideItemBlock(Int3 _Coord, ItemBlock _Block) {
 
 Integer RemoveItemBlocks(Int3 _Coord, Text _MacroblockName, Integer _Direction) {
   declare metadata ItemBlock[] Atlas_ItemBlocks as StoredBlocks for Map;
+  declare Before = Private_CopyItemBlocks(StoredBlocks/* not Null here */);
   declare ItemBlock[] Remaining;
   declare Count = 0;
   foreach (Block in StoredBlocks/* not Null here */) {
@@ -900,6 +1435,9 @@ Integer RemoveItemBlocks(Int3 _Coord, Text _MacroblockName, Integer _Direction) 
     SetItemBlockList(Remaining);
   }
   Private_SnapshotItems();
+  if (Count > 0) {
+    Private_RecordItemEdit(Before, Remaining, []);
+  }
   return Count;
 }
 
@@ -1109,167 +1647,6 @@ CMapEditorPlugin::CardinalDirections Private_LogicalFreeformDirectionFor(ItemBlo
   return Private_OffsetDirection(Private_LogicalDirectionFor(_Block), -Private_FreeformModelDirectionOffset(_Block.PieceIndex));
 }
 
-Boolean Private_WithinMap(Int3 _Coord) {
-  return _Coord.X >= 0 && _Coord.Z >= 0 && _Coord.Y >= 0 && _Coord.X < Map.Size.X && _Coord.Z < Map.Size.Z && _Coord.Y < Map.Size.Y;
-}
-
-Void Private_RollbackPlacementPlan(ItemBlock[] _Removed, ItemBlock[] _Placed, NoItemReplacement[] _RemovedNoItemBlocks) {
-  declare ItemBlock[] FailedToRemove;
-  declare Index = _Placed.count - 1;
-  while (Index >= 0) {
-    declare Block = _Placed[Index];
-    declare Model = GetMacroblockModelFromFilePath(Block.MacroblockName);
-    if (Model == Null || !RemoveMacroblock(Model, Block.MacroblockCoord, DirectionFromIndex(Block.MacroblockDir))) {
-      FailedToRemove.add(Block);
-      G_LastRollbackFailed = True;
-    }
-    Index -= 1;
-  }
-  declare ItemBlock[] FailedToRestore;
-  foreach (Block in _Removed) {
-    declare Model = GetMacroblockModelFromFilePath(Block.MacroblockName);
-    if (Model == Null || !PlaceMacroblock_NoDestruction(Model, Block.MacroblockCoord, DirectionFromIndex(Block.MacroblockDir))) {
-      FailedToRestore.add(Block);
-      G_LastRollbackFailed = True;
-    }
-  }
-  Private_RestoreNoItemBlocks(_RemovedNoItemBlocks);
-  if (G_LastRollbackFailed) {
-    declare ItemBlock[] Updated;
-    foreach (Block in GetItemBlockList()) {
-      if (Private_IndexOfItemBlock(FailedToRestore, Block) < 0) {
-        Updated.add(Block);
-      }
-    }
-    foreach (Block in FailedToRemove) {
-      Updated.add(Block);
-    }
-    SetItemBlockList(Updated);
-  }
-  Private_SnapshotItems();
-}
-
-Boolean ExecutePlacementPlan(Placement[] _Plan) {
-  G_LastRollbackFailed = False;
-  if (_Plan.count == 0) {
-    return False;
-  }
-  declare metadata ItemBlock[] Atlas_ItemBlocks as StoredBlocks for Map;
-  declare Existing = StoredBlocks/* not Null here */;
-  declare Integer[][Int3] ExistingByCell;
-  for (Index, 0, Existing.count - 1) {
-    declare Block = Existing[Index];
-    for (X, Block.MacroblockCoord.X, Block.MacroblockCoord.X + MathLib::Max(1, Block.Width) - 1) {
-      for (Z, Block.MacroblockCoord.Z, Block.MacroblockCoord.Z + MathLib::Max(1, Block.Depth) - 1) {
-        declare Cell = <X, Block.MacroblockCoord.Y, Z>;
-        if (!ExistingByCell.existskey(Cell)) {
-          ExistingByCell[Cell] = [];
-        }
-        ExistingByCell[Cell].add(Index);
-      }
-    }
-  }
-  declare Boolean[Int3] PlannedCells;
-  declare Boolean[Integer] RemovedIndices;
-  foreach (Entry in _Plan) {
-    if (!Private_WithinMap(Entry.Coord) || GetMacroblockModelFromFilePath(Entry.MacroblockName) == Null) {
-      return False;
-    }
-    declare Width = MathLib::Max(1, Entry.Width);
-    declare Depth = MathLib::Max(1, Entry.Depth);
-    for (X, Entry.Coord.X, Entry.Coord.X + Width - 1) {
-      for (Z, Entry.Coord.Z, Entry.Coord.Z + Depth - 1) {
-        declare Cell = <X, Entry.Coord.Y, Z>;
-        if (!Private_WithinMap(Cell) || PlannedCells.existskey(Cell)) {
-          return False;
-        }
-        PlannedCells[Cell] = True;
-        if (!ExistingByCell.existskey(Cell)) {
-          continue;
-        }
-        foreach (Index in ExistingByCell[Cell]) {
-          declare Block = Existing[Index];
-          if (Block.Family != Entry.Family) {
-            return False;
-          }
-          if (Private_SamePlacement(Block, Entry)) {
-            continue;
-          }
-          RemovedIndices[Index] = True;
-        }
-      }
-    }
-  }
-  declare ItemBlock[] Removed;
-  for (Index, 0, Existing.count - 1) {
-    if (!RemovedIndices.existskey(Index)) {
-      continue;
-    }
-    declare Block = Existing[Index];
-    declare Model = GetMacroblockModelFromFilePath(Block.MacroblockName);
-    if (Model == Null || !RemoveMacroblock(Model, Block.MacroblockCoord, DirectionFromIndex(Block.MacroblockDir))) {
-      Private_RollbackPlacementPlan(Removed, [], []);
-      return False;
-    }
-    Removed.add(Block);
-  }
-  declare ItemBlock[] Placed;
-  declare NoItemReplacement[] RemovedNoItemBlocks;
-  foreach (Entry in _Plan) {
-    declare AlreadyThere = False;
-    if (ExistingByCell.existskey(Entry.Coord)) {
-      foreach (Index in ExistingByCell[Entry.Coord]) {
-        declare Block = Existing[Index];
-        if (!RemovedIndices.existskey(Index) && Private_SamePlacement(Block, Entry)) {
-          AlreadyThere = True;
-        }
-      }
-    }
-    if (AlreadyThere) {
-      continue;
-    }
-    declare Model = GetMacroblockModelFromFilePath(Entry.MacroblockName);
-    declare RemovalResult = Private_RemoveNoItemBlocks(Entry.Coord, MathLib::Max(1, Entry.Width), MathLib::Max(1, Entry.Depth), Entry.Ground);
-    foreach (Cell in RemovalResult.Removed) {
-      RemovedNoItemBlocks.add(Cell);
-    }
-    if (!RemovalResult.Success) {
-      Private_RollbackPlacementPlan(Removed, Placed, RemovedNoItemBlocks);
-      return False;
-    }
-    if (Model == Null || !CanPlaceMacroblock_NoDestruction(Model, Entry.Coord, Entry.Direction)) {
-      Private_RollbackPlacementPlan(Removed, Placed, RemovedNoItemBlocks);
-      return False;
-    }
-    declare PreviousCount = Items.count;
-    if (!PlaceMacroblock_NoDestruction(Model, Entry.Coord, Entry.Direction)) {
-      Private_RollbackPlacementPlan(Removed, Placed, RemovedNoItemBlocks);
-      return False;
-    }
-    declare Vec3 Position;
-    if (Items.count > PreviousCount) {
-      Position = Items[PreviousCount].Position;
-    } else {
-      Position = GetVec3FromCoord(Entry.Coord);
-    }
-    Placed.add(ItemBlock { MacroblockName = Entry.MacroblockName, MacroblockCoord = Entry.Coord, MacroblockDir = DirectionToIndex(Entry.Direction), ItemPosition = Position, Ground = Entry.Ground, Family = Entry.Family, PieceIndex = Entry.PieceIndex, Width = Entry.Width, Depth = Entry.Depth });
-  }
-  if (Removed.count > 0 || Placed.count > 0) {
-    declare ItemBlock[] Updated;
-    for (Index, 0, Existing.count - 1) {
-      if (!RemovedIndices.existskey(Index)) {
-        Updated.add(Existing[Index]);
-      }
-    }
-    foreach (Block in Placed) {
-      Updated.add(Block);
-    }
-    SetItemBlockList(Updated);
-    Private_SnapshotItems();
-  }
-  return True;
-}
-
 Boolean Private_InsideFootprint(Int3 _Coord, Placement _Placement) {
   return _Coord.Y == _Placement.Coord.Y && _Coord.X >= _Placement.Coord.X && _Coord.X < _Placement.Coord.X + MathLib::Max(1, _Placement.Width) && _Coord.Z >= _Placement.Coord.Z && _Coord.Z < _Placement.Coord.Z + MathLib::Max(1, _Placement.Depth);
 }
@@ -1280,46 +1657,6 @@ Boolean Private_ItemBlockFootprintsOverlap(ItemBlock _Block, Placement _Placemen
 
 Boolean Private_FootprintsOverlap(Placement _A, Placement _B) {
   return _A.Coord.Y == _B.Coord.Y && _A.Coord.X < _B.Coord.X + MathLib::Max(1, _B.Width) && _B.Coord.X < _A.Coord.X + MathLib::Max(1, _A.Width) && _A.Coord.Z < _B.Coord.Z + MathLib::Max(1, _B.Depth) && _B.Coord.Z < _A.Coord.Z + MathLib::Max(1, _A.Depth);
-}
-
-Void Private_RestoreRemoved(ItemBlock[] _Removed) {
-  declare metadata ItemBlock[] Atlas_ItemBlocks as StoredBlocks for Map;
-  foreach (Block in _Removed) {
-    declare Model = GetMacroblockModelFromFilePath(Block.MacroblockName);
-    if (Model != Null && PlaceMacroblock_NoDestruction(Model, Block.MacroblockCoord, DirectionFromIndex(Block.MacroblockDir))) {
-      StoredBlocks/* not Null here */.add(Block);
-    } else {
-      G_LastRollbackFailed = True;
-    }
-  }
-  Private_SnapshotItems();
-}
-
-Boolean ApplyResolvedChanges(ItemBlock[] _ToRemove, Placement[] _ToPlace, Int3[] _RemovedWater) {
-  G_LastRollbackFailed = False;
-  declare ItemBlock[] Removed;
-  declare metadata ItemBlock[] Atlas_ItemBlocks as StoredBlocks for Map;
-  foreach (Block in _ToRemove) {
-    declare Index = Private_IndexOfItemBlock(StoredBlocks/* not Null here */, Block);
-    if (Index < 0) {
-      Private_RestoreRemoved(Removed);
-      return False;
-    }
-    declare Model = GetMacroblockModelFromFilePath(Block.MacroblockName);
-    if (Model == Null || !RemoveMacroblock(Model, Block.MacroblockCoord, DirectionFromIndex(Block.MacroblockDir))) {
-      Private_RestoreRemoved(Removed);
-      return False;
-    }
-    SetItemBlockList(Private_WithoutItemBlockAt(StoredBlocks/* not Null here */, Index));
-    Removed.add(Block);
-  }
-  if (_ToPlace.count > 0 && !ExecutePlacementPlan(_ToPlace)) {
-    Private_RestoreRemoved(Removed);
-    return False;
-  }
-  SetRemovedWater(_RemovedWater);
-  Private_SnapshotItems();
-  return True;
 }
 
 Integer Private_SideBetween(Int3 _First, Int3 _Second) {
@@ -1355,15 +1692,6 @@ Integer Private_OppositeSide(Integer _Side) {
     return 2;
   }
   return 0;
-}
-
-Integer Private_IndexOfCoord(Int3[] _Coords, Int3 _Coord) {
-  for (I, 0, _Coords.count - 1) {
-    if (Private_SameCoord(_Coords[I], _Coord)) {
-      return I;
-    }
-  }
-  return -1;
 }
 
 Placement[] ResolveRoadPath(Int3[] _Path, Text _Family) {

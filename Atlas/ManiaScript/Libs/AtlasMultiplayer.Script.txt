@@ -267,6 +267,7 @@ Boolean ApplySnapshot(Integer _SnapshotRevision, Atlas::ItemBlock[] _ItemBlocks,
   }
   Atlas::SetItemBlockList(_ItemBlocks);
   Atlas::SetRemovedWater(_RemovedWater);
+  Atlas::ClearAtlasEditHistory();
   G_Revision = _SnapshotRevision;
   G_AwaitingSnapshot = False;
   return True;
