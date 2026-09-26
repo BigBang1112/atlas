@@ -77,6 +77,21 @@ public static class AtlasTests
         Check(AtlasEngine.ResolveFreeformCell(edgeSelection, edgeSelection, edge, 12,
             CMapEditorPlugin.CardinalDirections.East, false).Piece == 5,
             "an area edge joined to TShaped stays a solid Deadend");
+        var east = new Int3(edge.X + 1, edge.Y, edge.Z);
+        var connectedEndpoint = new Dictionary<Int3, bool>
+        {
+            [edge] = true,
+            [east] = true
+        };
+        var selectedNeighbor = new Dictionary<Int3, bool> { [east] = true };
+        var recalculatedEndpoint = AtlasEngine.ResolveFreeformCell(connectedEndpoint,
+            selectedNeighbor, edge, 12, CMapEditorPlugin.CardinalDirections.North, false);
+        Check(recalculatedEndpoint.Piece == 12 &&
+            recalculatedEndpoint.Direction == CMapEditorPlugin.CardinalDirections.East,
+            "an unselected endpoint rotates toward a newly connected neighbor");
+        Check(AtlasEngine.ResolveFreeformCell(connectedEndpoint, selectedNeighbor, edge, 4,
+            CMapEditorPlugin.CardinalDirections.North, false).Piece == 4,
+            "an existing base is not downgraded when a neighbor is added");
         var base7 = AtlasEngine.ResolveFreeformOverlap(10, CMapEditorPlugin.CardinalDirections.South, 9,
             CMapEditorPlugin.CardinalDirections.North);
         var reversedBase7 = AtlasEngine.ResolveFreeformOverlap(9, CMapEditorPlugin.CardinalDirections.North, 10,

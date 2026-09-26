@@ -94,8 +94,6 @@ public class AtlasEngine : CMapEditorPlugin, ILib
 
     private struct AtlasEdit
     {
-        public List<ItemBlock> Before;
-        public List<ItemBlock> After;
         public List<ItemBlock> AddedBlocks;
         public List<ItemBlock> RemovedBlocks;
         public List<NoItemReplacement> RemovedNoItemBlocks;
@@ -235,55 +233,35 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         return copy;
     }
 
-    private static bool SameItemBlockLists(IList<ItemBlock> first, IList<ItemBlock> second)
+    private static bool ContainsItemBlocks(IList<ItemBlock> blocks, IList<ItemBlock> expected)
     {
-        if (first.Count != second.Count) return false;
-        var sameOrder = true;
-        for (var i = 0; i < first.Count; i++)
-            if (!SameItemBlock(first[i], second[i])) { sameOrder = false; break; }
-        return sameOrder || ItemBlockDifference(first, second).Count == 0;
+        var unmatched = CopyItemBlocks(blocks);
+        foreach (var block in expected)
+        {
+            var index = IndexOfItemBlock(unmatched, block);
+            if (index < 0) return false;
+            unmatched.RemoveAt(index);
+        }
+        return true;
     }
 
-    private static List<ItemBlock> ItemBlockDifference(IList<ItemBlock> first, IList<ItemBlock> second)
+    private static bool MatchesItemBlockChanges(IList<ItemBlock> blocks,
+        IList<ItemBlock> expectedPresent, IList<ItemBlock> expectedAbsent)
     {
-        var unmatched = new Dictionary<Int3, List<ItemBlock>>();
-        foreach (var block in second)
-        {
-            var coord = block.MacroblockCoord;
-            if (!unmatched.ContainsKey(coord)) unmatched[coord] = new List<ItemBlock>();
-            var bucket = unmatched[coord];
-            bucket.Add(block);
-            unmatched[coord] = bucket;
-        }
-        var result = new List<ItemBlock>();
-        foreach (var block in first)
-        {
-            var coord = block.MacroblockCoord;
-            if (!unmatched.ContainsKey(coord)) { result.Add(block); continue; }
-            var bucket = unmatched[coord];
-            var index = IndexOfItemBlock(bucket, block);
-            if (index < 0) result.Add(block);
-            else
-            {
-                bucket.RemoveAt(index);
-                unmatched[coord] = bucket;
-            }
-        }
-        return result;
+        if (!ContainsItemBlocks(blocks, expectedPresent)) return false;
+        foreach (var block in expectedAbsent)
+            if (IndexOfItemBlock(blocks, block) >= 0) return false;
+        return true;
     }
 
-    private void RecordItemEdit(IList<ItemBlock> before, IList<ItemBlock> after,
+    private void PushItemEdit(IList<ItemBlock> removed, IList<ItemBlock> added,
         IList<NoItemReplacement> removedNoItemBlocks)
     {
-        if (replayingHistory) return;
-        var removed = ItemBlockDifference(before, after);
-        var added = ItemBlockDifference(after, before);
-        if (removed.Count == 0 && added.Count == 0) return;
+        if (replayingHistory || (removed.Count == 0 && added.Count == 0)) return;
         var placeholders = new List<NoItemReplacement>();
         foreach (var entry in removedNoItemBlocks) placeholders.Add(entry);
         PushUndoEdit(new AtlasEdit {
-            Before = CopyItemBlocks(before), After = CopyItemBlocks(after),
-            AddedBlocks = added, RemovedBlocks = removed,
+            AddedBlocks = CopyItemBlocks(added), RemovedBlocks = CopyItemBlocks(removed),
             RemovedNoItemBlocks = placeholders, NoItemBlockName = noItemBlockName });
     }
 
@@ -300,8 +278,7 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         redoEdits.Clear();
     }
 
-    private bool ApplyItemSnapshot(IList<ItemBlock> target, IList<ItemBlock> toRemove,
-        IList<ItemBlock> toPlaceBlocks)
+    private bool ApplyItemChanges(IList<ItemBlock> toRemove, IList<ItemBlock> toPlaceBlocks)
     {
         var toPlace = new List<Placement>();
         foreach (var block in toPlaceBlocks)
@@ -312,7 +289,6 @@ public class AtlasEngine : CMapEditorPlugin, ILib
                 Width = block.Width, Depth = block.Depth });
         }
         if (!ApplyResolvedChangesCore(toRemove, toPlace, GetRemovedWater(), false)) return false;
-        SetItemBlockList(target);
         SnapshotItems();
         return true;
     }
@@ -321,19 +297,19 @@ public class AtlasEngine : CMapEditorPlugin, ILib
     {
         if (!CanUndoAtlasEdit) return false;
         var edit = undoEdits[undoEdits.Count - 1];
-        if (!SameItemBlockLists(GetItemBlockList(), edit.After))
+        if (!MatchesItemBlockChanges(GetItemBlockList(), edit.AddedBlocks, edit.RemovedBlocks))
         { ClearAtlasEditHistory(); return false; }
         var configuredNoItemBlockName = noItemBlockName;
         noItemBlockName = edit.NoItemBlockName;
         replayingHistory = true;
-        var succeeded = ApplyItemSnapshot(edit.Before, edit.AddedBlocks, edit.RemovedBlocks);
+        var succeeded = ApplyItemChanges(edit.AddedBlocks, edit.RemovedBlocks);
         if (succeeded)
         {
             lastRollbackFailed = false;
             Log($"Atlas undo: restoring {edit.RemovedNoItemBlocks.Count} no-item block(s).");
             RestoreNoItemBlocks(edit.RemovedNoItemBlocks);
             succeeded = !lastRollbackFailed;
-            if (!succeeded) ApplyItemSnapshot(edit.After, edit.RemovedBlocks, edit.AddedBlocks);
+            if (!succeeded) ApplyItemChanges(edit.RemovedBlocks, edit.AddedBlocks);
             else SnapshotItems();
         }
         replayingHistory = false;
@@ -352,12 +328,12 @@ public class AtlasEngine : CMapEditorPlugin, ILib
     {
         if (!CanRedoAtlasEdit) return false;
         var edit = redoEdits[redoEdits.Count - 1];
-        if (!SameItemBlockLists(GetItemBlockList(), edit.Before))
+        if (!MatchesItemBlockChanges(GetItemBlockList(), edit.RemovedBlocks, edit.AddedBlocks))
         { ClearAtlasEditHistory(); return false; }
         var configuredNoItemBlockName = noItemBlockName;
         noItemBlockName = edit.NoItemBlockName;
         replayingHistory = true;
-        var succeeded = ApplyItemSnapshot(edit.After, edit.RemovedBlocks, edit.AddedBlocks);
+        var succeeded = ApplyItemChanges(edit.RemovedBlocks, edit.AddedBlocks);
         replayingHistory = false;
         noItemBlockName = configuredNoItemBlockName;
         if (!succeeded)
@@ -466,6 +442,31 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         towerDepth = nextDepth;
     }
     public int GetRealGroundHeight(int x, int z) => GetGroundHeight(x, z);
+
+    private void UpdateGroundItemHeights(IList<ItemBlock> removed, IList<ItemBlock> added)
+    {
+        if (!groundItemHeightsValid) return;
+        foreach (var block in removed)
+            if (block.Ground)
+            {
+                groundItemHeightsValid = false;
+                return;
+            }
+        foreach (var block in added)
+        {
+            if (!block.Ground) continue;
+            for (var cellX = block.MacroblockCoord.X;
+                cellX < block.MacroblockCoord.X + Math.Max(1, block.Width); cellX++)
+            for (var cellZ = block.MacroblockCoord.Z;
+                cellZ < block.MacroblockCoord.Z + Math.Max(1, block.Depth); cellZ++)
+            {
+                var cell = new Int3(cellX, 0, cellZ);
+                if (!groundItemHeights.ContainsKey(cell) ||
+                    groundItemHeights[cell] < block.MacroblockCoord.Y)
+                    groundItemHeights[cell] = block.MacroblockCoord.Y;
+            }
+        }
+    }
 
     public int GetFakeGroundHeight(int x, int z)
     {
@@ -950,7 +951,6 @@ public class AtlasEngine : CMapEditorPlugin, ILib
     {
         lastRollbackFailed = false;
         if (width < 1 || depth < 1) return false;
-        var before = CopyItemBlocks(GetItemBlockList());
         var model = GetMacroblockModelFromFilePath(macroblockName);
         if (model == null) return false;
         var removalResult = RemoveNoItemBlocks(coord, width, depth, ground);
@@ -972,15 +972,16 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         }
         var position = Items.Count > previousCount ? Items[previousCount].Position : GetVec3FromCoord(coord);
         Metadata<List<ItemBlock>>.For(Map, out var storedBlocks, name: "Atlas_ItemBlocks");
-        storedBlocks.Value!.Add(new ItemBlock
+        var added = new ItemBlock
         {
             MacroblockName = macroblockName, MacroblockCoord = coord, MacroblockDir = DirectionToIndex(direction),
             ItemPosition = position, Ground = ground, Family = family, PieceIndex = pieceIndex,
             Width = width, Depth = depth
-        });
-        groundItemHeightsValid = false;
+        };
+        storedBlocks.Value!.Add(added);
+        UpdateGroundItemHeights(new List<ItemBlock>(), new List<ItemBlock> { added });
         SnapshotItems();
-        RecordItemEdit(before, GetItemBlockList(), removalResult.Removed);
+        PushItemEdit(new List<ItemBlock>(), new List<ItemBlock> { added }, removalResult.Removed);
         return true;
     }
 
@@ -992,8 +993,8 @@ public class AtlasEngine : CMapEditorPlugin, ILib
     public int RemoveItemBlocks(Int3 coord, string macroblockName, int direction)
     {
         Metadata<List<ItemBlock>>.For(Map, out var storedBlocks, name: "Atlas_ItemBlocks");
-        var before = CopyItemBlocks(storedBlocks.Value!);
         var remaining = new List<ItemBlock>();
+        var removed = new List<ItemBlock>();
         var count = 0;
         foreach (var block in storedBlocks.Value!)
         {
@@ -1005,6 +1006,7 @@ public class AtlasEngine : CMapEditorPlugin, ILib
                 if (model != null && RemoveMacroblock(model, block.MacroblockCoord, DirectionFromIndex(block.MacroblockDir)))
                 {
                     count++;
+                    removed.Add(block);
                     continue;
                 }
             }
@@ -1012,7 +1014,7 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         }
         if (count > 0) SetItemBlockList(remaining);
         SnapshotItems();
-        if (count > 0) RecordItemEdit(before, remaining, new List<NoItemReplacement>());
+        if (count > 0) PushItemEdit(removed, new List<ItemBlock>(), new List<NoItemReplacement>());
         return count;
     }
 
@@ -1307,31 +1309,59 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         if (plan.Count == 0) return false;
         Metadata<List<ItemBlock>>.For(Map, out var storedBlocks, name: "Atlas_ItemBlocks");
         var existing = storedBlocks.Value!;
-        var existingByCell = new Dictionary<Int3, List<int>>();
-        for (var index = 0; index < existing.Count; index++)
-        {
-            var block = existing[index];
-            for (var x = block.MacroblockCoord.X; x < block.MacroblockCoord.X + Math.Max(1, block.Width); x++)
-            for (var z = block.MacroblockCoord.Z; z < block.MacroblockCoord.Z + Math.Max(1, block.Depth); z++)
-            {
-                var cell = new Int3(x, block.MacroblockCoord.Y, z);
-                if (!existingByCell.ContainsKey(cell)) existingByCell[cell] = new List<int>();
-                existingByCell[cell].Add(index);
-            }
-        }
         var plannedCells = new Dictionary<Int3, bool>();
-        var removedIndices = new Dictionary<int, bool>();
+        var minX = plan[0].Coord.X;
+        var maxX = minX;
+        var minY = plan[0].Coord.Y;
+        var maxY = minY;
+        var minZ = plan[0].Coord.Z;
+        var maxZ = minZ;
         foreach (var entry in plan)
         {
             if (!WithinMap(entry.Coord) || GetMacroblockModelFromFilePath(entry.MacroblockName) == null) return false;
             var width = Math.Max(1, entry.Width);
             var depth = Math.Max(1, entry.Depth);
+            minX = Math.Min(minX, entry.Coord.X);
+            maxX = Math.Max(maxX, entry.Coord.X + width - 1);
+            minY = Math.Min(minY, entry.Coord.Y);
+            maxY = Math.Max(maxY, entry.Coord.Y);
+            minZ = Math.Min(minZ, entry.Coord.Z);
+            maxZ = Math.Max(maxZ, entry.Coord.Z + depth - 1);
             for (var x = entry.Coord.X; x < entry.Coord.X + width; x++)
             for (var z = entry.Coord.Z; z < entry.Coord.Z + depth; z++)
             {
                 var cell = new Int3(x, entry.Coord.Y, z);
                 if (!WithinMap(cell) || plannedCells.ContainsKey(cell)) return false;
                 plannedCells[cell] = true;
+            }
+        }
+        var existingByCell = new Dictionary<Int3, List<int>>();
+        for (var index = 0; index < existing.Count; index++)
+        {
+            var block = existing[index];
+            if (block.MacroblockCoord.Y < minY || block.MacroblockCoord.Y > maxY ||
+                block.MacroblockCoord.X > maxX ||
+                block.MacroblockCoord.X + Math.Max(1, block.Width) <= minX ||
+                block.MacroblockCoord.Z > maxZ ||
+                block.MacroblockCoord.Z + Math.Max(1, block.Depth) <= minZ) continue;
+            for (var x = block.MacroblockCoord.X; x < block.MacroblockCoord.X + Math.Max(1, block.Width); x++)
+            for (var z = block.MacroblockCoord.Z; z < block.MacroblockCoord.Z + Math.Max(1, block.Depth); z++)
+            {
+                var cell = new Int3(x, block.MacroblockCoord.Y, z);
+                if (!plannedCells.ContainsKey(cell)) continue;
+                if (!existingByCell.ContainsKey(cell)) existingByCell[cell] = new List<int>();
+                existingByCell[cell].Add(index);
+            }
+        }
+        var removedIndices = new Dictionary<int, bool>();
+        foreach (var entry in plan)
+        {
+            var width = Math.Max(1, entry.Width);
+            var depth = Math.Max(1, entry.Depth);
+            for (var x = entry.Coord.X; x < entry.Coord.X + width; x++)
+            for (var z = entry.Coord.Z; z < entry.Coord.Z + depth; z++)
+            {
+                var cell = new Int3(x, entry.Coord.Y, z);
                 if (!existingByCell.ContainsKey(cell)) continue;
                 foreach (var index in existingByCell[cell])
                 {
@@ -1401,14 +1431,12 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         }
         if (removed.Count > 0 || placed.Count > 0)
         {
-            var before = CopyItemBlocks(existing);
-            var updated = new List<ItemBlock>();
-            for (var index = 0; index < existing.Count; index++)
-                if (!removedIndices.ContainsKey(index)) updated.Add(existing[index]);
-            foreach (var block in placed) updated.Add(block);
-            SetItemBlockList(updated);
+            for (var index = storedBlocks.Value!.Count - 1; index >= 0; index--)
+                if (removedIndices.ContainsKey(index)) storedBlocks.Value.RemoveAt(index);
+            foreach (var block in placed) storedBlocks.Value!.Add(block);
+            UpdateGroundItemHeights(removed, placed);
             SnapshotItems();
-            RecordItemEdit(before, updated, removedNoItemBlocks);
+            PushItemEdit(removed, placed, removedNoItemBlocks);
         }
         return true;
     }
@@ -1631,10 +1659,12 @@ public class AtlasEngine : CMapEditorPlugin, ILib
 
     // Both masks use clockwise bits 1, 2, 4, 8: N/E/S/W for sides,
     // NW/NE/SE/SW for diagonals.
+    private static bool IsFreeformBase(int piece) => piece >= 0 && (piece <= 4 || piece == 14);
+
     private static int FreeformSideMask(int piece, CardinalDirections direction)
     {
         var mask = 0;
-        if (piece >= 0 && (piece <= 4 || piece == 14)) mask = 15;
+        if (IsFreeformBase(piece)) mask = 15;
         else if (piece >= 5 && piece <= 8) mask = 11;
         else if (piece == 9 || piece == 10) mask = 3;
         else if (piece == 11) mask = 5;
@@ -1764,7 +1794,7 @@ public class AtlasEngine : CMapEditorPlugin, ILib
     {
         var sides = FreeformOccupiedSides(occupied, coord);
         var diagonals = FreeformOccupiedDiagonals(occupied, coord);
-        if (oldPiece >= 0)
+        if (oldPiece >= 0 && (selected.ContainsKey(coord) || IsFreeformBase(oldPiece)))
         {
             sides = UnionMask(sides, FreeformSideMask(oldPiece, oldDirection));
             diagonals = UnionMask(diagonals, FreeformDiagonalMask(oldPiece, oldDirection));

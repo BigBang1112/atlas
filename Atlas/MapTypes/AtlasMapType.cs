@@ -109,11 +109,11 @@ public class AtlasMapType : CMapType, IContext
         atlas.Initialize();
         atlas.SetSelectionChangeEventsEnabled(false);
         atlas.SetSelectionMode(AtlasEngine.SelectionMode.Ground2D);
-        atlas.SetFreeformPlacementMode(AtlasEngine.FreeformPlacementMode.SelectionOnly);
+        atlas.SetFreeformPlacementMode(AtlasEngine.FreeformPlacementMode.ConnectExisting);
         ManialinkText = """
             <manialink version="3">
               <frame pos="91 76">
-                <quad pos="0 0" z-index="0" size="65 75" bgcolor="1112" />
+                                <quad pos="0 0" z-index="0" size="65 85" bgcolor="1112" />
                 <label pos="3 -2" z-index="2" size="59 5" text="ATLAS TOOLS" textsize="2" textcolor="fff" />
                 <label pos="3 -8" z-index="2" size="59 4" text="Select a mode, then drag in the map" textsize="1" textcolor="ccc" />
 
@@ -140,15 +140,20 @@ public class AtlasMapType : CMapType, IContext
                 <quad pos="34 -56" z-index="1" size="28 8" bgcolor="7540" />
                 <label id="AtlasRedo" pos="35 -57" z-index="2" size="26 6" text="Redo item" textsize="2" textcolor="fff" scriptevents="1" />
 
-                <label id="AtlasStatus" pos="3 -68" z-index="2" size="59 5" text="Mode: Ground docks" textsize="1" textcolor="ccc" />
+                <quad pos="3 -66" z-index="1" size="59 8" bgcolor="2860" />
+                <label id="AtlasConnections" pos="4 -67" z-index="2" size="57 6" text="Connections: Existing" textsize="2" textcolor="fff" scriptevents="1" />
+
+                <label id="AtlasStatus" pos="3 -78" z-index="2" size="59 5" text="Mode: Ground docks" textsize="1" textcolor="ccc" />
               </frame>
               <script><!--
                 main() {
                   declare Status <=> (Page.GetFirstChild("AtlasStatus") as CMlLabel);
+                                    declare Connections <=> (Page.GetFirstChild("AtlasConnections") as CMlLabel);
+                                    declare Boolean ConnectExisting = True;
                   declare Boolean WasPointerOverPanel = False;
                   while (True) {
                     yield;
-                    declare Boolean PointerOverPanel = MouseX >= 91. && MouseX <= 156. && MouseY <= 76. && MouseY >= 1.;
+                    declare Boolean PointerOverPanel = MouseX >= 91. && MouseX <= 156. && MouseY <= 76. && MouseY >= -9.;
                     if (PointerOverPanel != WasPointerOverPanel) {
                       if (PointerOverPanel) SendCustomEvent("AtlasPanelHover", ["1"]);
                       else SendCustomEvent("AtlasPanelHover", ["0"]);
@@ -163,6 +168,11 @@ public class AtlasMapType : CMapType, IContext
                       else if (Event.ControlId == "AtlasRemoveWater") Status.Value = "Mode: Remove water";
                       else if (Event.ControlId == "AtlasRestoreWater") Status.Value = "Mode: Restore water";
                       else if (Event.ControlId == "AtlasNone") Status.Value = "Mode: No selection";
+                                            else if (Event.ControlId == "AtlasConnections") {
+                                                ConnectExisting = !ConnectExisting;
+                                                if (ConnectExisting) Connections.Value = "Connections: Existing";
+                                                else Connections.Value = "Connections: Selection only";
+                                            }
                       SendCustomEvent("AtlasPanel", [Event.ControlId]);
                     }
                   }
@@ -197,6 +207,12 @@ public class AtlasMapType : CMapType, IContext
             else if (action == "AtlasRemoveWater") atlas.SetSelectionMode(AtlasEngine.SelectionMode.RemoveWater);
             else if (action == "AtlasRestoreWater") atlas.SetSelectionMode(AtlasEngine.SelectionMode.RestoreWater);
             else if (action == "AtlasNone") atlas.SetSelectionMode(AtlasEngine.SelectionMode.None);
+            else if (action == "AtlasConnections")
+            {
+                if (atlas.FreeformMode == AtlasEngine.FreeformPlacementMode.ConnectExisting)
+                    atlas.SetFreeformPlacementMode(AtlasEngine.FreeformPlacementMode.SelectionOnly);
+                else atlas.SetFreeformPlacementMode(AtlasEngine.FreeformPlacementMode.ConnectExisting);
+            }
             else if (action == "AtlasUndo")
             {
                 if (!atlas.CanUndoAtlasEdit) Log("No item edit to undo.");
