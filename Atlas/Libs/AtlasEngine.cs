@@ -80,6 +80,18 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         public int DirectionOffset;
     }
 
+    private struct NoItemReplacement
+    {
+        public Int3 Coord;
+        public CardinalDirections Direction;
+    }
+
+    private struct NoItemRemoval
+    {
+        public bool Success;
+        public List<NoItemReplacement> Removed;
+    }
+
     public struct FreeformCandidate
     {
         public int Piece;
@@ -106,6 +118,7 @@ public class AtlasEngine : CMapEditorPlugin, ILib
     private readonly Dictionary<string, string> removeWaterMapping = [];
     private readonly List<string> restoreWaterVoidNames = [];
     private string waterVoidName = "";
+    private string noItemBlockName = "";
     private readonly Dictionary<string, List<List<ItemBlockVariant>>> itemBlockGroups = [];
     private readonly Dictionary<string, Dictionary<int, int>> cubePieceMapping = [];
     private readonly Dictionary<Int3, int> groundItemHeights = [];
@@ -284,6 +297,9 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         foreach (var name in voidNames) restoreWaterVoidNames.Add(name);
         waterVoidName = waterVoid;
     }
+
+    /// <summary>Block name or macroblock file path to replace under ground item blocks.</summary>
+    public void SetNoItemBlockName(string blockName) => noItemBlockName = blockName;
 
     public void SetTowerSelectionSize(int width, int depth)
     {
@@ -727,11 +743,27 @@ public class AtlasEngine : CMapEditorPlugin, ILib
     public bool PlaceItemBlockWithFootprint(string macroblockName, Int3 coord, CardinalDirections direction,
         bool ground, string family, int pieceIndex, int width, int depth)
     {
+        lastRollbackFailed = false;
         if (width < 1 || depth < 1) return false;
         var model = GetMacroblockModelFromFilePath(macroblockName);
-        if (model == null || !CanPlaceMacroblock_NoDestruction(model, coord, direction)) return false;
+        if (model == null) return false;
+        var removalResult = RemoveNoItemBlocks(coord, width, depth, ground);
+        if (!removalResult.Success)
+        {
+            RestoreNoItemBlocks(removalResult.Removed);
+            return false;
+        }
+        if (!CanPlaceMacroblock_NoDestruction(model, coord, direction))
+        {
+            RestoreNoItemBlocks(removalResult.Removed);
+            return false;
+        }
         var previousCount = Items.Count;
-        if (!PlaceMacroblock_NoDestruction(model, coord, direction)) return false;
+        if (!PlaceMacroblock_NoDestruction(model, coord, direction))
+        {
+            RestoreNoItemBlocks(removalResult.Removed);
+            return false;
+        }
         var position = Items.Count > previousCount ? Items[previousCount].Position : GetVec3FromCoord(coord);
         Metadata<List<ItemBlock>>.For(Map, out var storedBlocks, name: "Atlas_ItemBlocks");
         storedBlocks.Value!.Add(new ItemBlock
@@ -967,6 +999,76 @@ public class AtlasEngine : CMapEditorPlugin, ILib
     private bool WithinMap(Int3 coord) => coord.X >= 0 && coord.Z >= 0 && coord.Y >= 0 &&
         coord.X < Map.Size.X && coord.Z < Map.Size.Z && coord.Y < Map.Size.Y;
 
+    private NoItemRemoval RemoveNoItemBlocks(Int3 coord, int width, int depth, bool ground)
+    {
+        var removed = new List<NoItemReplacement>();
+        if (!ground || noItemBlockName == "")
+            return new NoItemRemoval { Success = true, Removed = removed };
+        var macroblockModel = GetMacroblockModelFromFilePath(noItemBlockName);
+        if (macroblockModel == null && GetBlockModelFromName(noItemBlockName) == null)
+        {
+            Log($"No item block '{noItemBlockName}' was not found.");
+            return new NoItemRemoval { Success = false, Removed = removed };
+        }
+        for (var x = coord.X; x < coord.X + width; x++)
+        for (var z = coord.Z; z < coord.Z + depth; z++)
+        {
+            var cell = new Int3(x, CollectionGroundY, z);
+            if (macroblockModel != null)
+            {
+                // Generated item macroblocks have one item. A decreased item count
+                // distinguishes a real removal from a no-op at an empty cell.
+                var heights = new List<int> { CollectionGroundY };
+                if (coord.Y != CollectionGroundY) heights.Add(coord.Y);
+                var removedAtCell = false;
+                foreach (var y in heights)
+                {
+                    if (removedAtCell) break;
+                    var candidate = new Int3(x, y, z);
+                    for (var direction = 0; direction < 4; direction++)
+                    {
+                        var previousCount = Items.Count;
+                        RemoveMacroblock(macroblockModel, candidate, DirectionFromIndex(direction));
+                        if (Items.Count >= previousCount) continue;
+                        removed.Add(new NoItemReplacement
+                        {
+                            Coord = candidate, Direction = DirectionFromIndex(direction)
+                        });
+                        removedAtCell = true;
+                        break;
+                    }
+                }
+                continue;
+            }
+            var block = GetBlock(cell);
+            if (block == null || block.BlockModel.Name != noItemBlockName) continue;
+            if (!RemoveBlock(cell)) return new NoItemRemoval { Success = false, Removed = removed };
+            var blockDirection = CardinalDirections.North;
+            if (block.Direction == CBlock.CardinalDirections.East) blockDirection = CardinalDirections.East;
+            else if (block.Direction == CBlock.CardinalDirections.South) blockDirection = CardinalDirections.South;
+            else if (block.Direction == CBlock.CardinalDirections.West) blockDirection = CardinalDirections.West;
+            removed.Add(new NoItemReplacement { Coord = cell, Direction = blockDirection });
+        }
+        return new NoItemRemoval { Success = true, Removed = removed };
+    }
+
+    private void RestoreNoItemBlocks(IList<NoItemReplacement> removed)
+    {
+        if (removed.Count == 0) return;
+        var macroblockModel = GetMacroblockModelFromFilePath(noItemBlockName);
+        if (macroblockModel != null)
+        {
+            foreach (var entry in removed)
+                if (!PlaceMacroblock_NoDestruction(macroblockModel, entry.Coord, entry.Direction))
+                    lastRollbackFailed = true;
+            return;
+        }
+        var blockModel = GetBlockModelFromName(noItemBlockName);
+        foreach (var entry in removed)
+            if (blockModel == null || !PlaceBlock(blockModel, entry.Coord, entry.Direction))
+                lastRollbackFailed = true;
+    }
+
     public bool ExecutePlacementPlan(IList<Placement> plan)
     {
         lastRollbackFailed = false;
@@ -1017,12 +1119,13 @@ public class AtlasEngine : CMapEditorPlugin, ILib
             var model = GetMacroblockModelFromFilePath(block.MacroblockName);
             if (model == null || !RemoveMacroblock(model, block.MacroblockCoord, DirectionFromIndex(block.MacroblockDir)))
             {
-                RollbackPlacementPlan(removed, new List<ItemBlock>());
+                RollbackPlacementPlan(removed, new List<ItemBlock>(), new List<NoItemReplacement>());
                 return false;
             }
             removed.Add(block);
         }
         var placed = new List<ItemBlock>();
+        var removedNoItemBlocks = new List<NoItemReplacement>();
         foreach (var entry in plan)
         {
             var alreadyThere = false;
@@ -1035,15 +1138,23 @@ public class AtlasEngine : CMapEditorPlugin, ILib
                 }
             if (alreadyThere) continue;
             var model = GetMacroblockModelFromFilePath(entry.MacroblockName);
+            var removalResult = RemoveNoItemBlocks(entry.Coord, Math.Max(1, entry.Width),
+                Math.Max(1, entry.Depth), entry.Ground);
+            foreach (var cell in removalResult.Removed) removedNoItemBlocks.Add(cell);
+            if (!removalResult.Success)
+            {
+                RollbackPlacementPlan(removed, placed, removedNoItemBlocks);
+                return false;
+            }
             if (model == null || !CanPlaceMacroblock_NoDestruction(model, entry.Coord, entry.Direction))
             {
-                RollbackPlacementPlan(removed, placed);
+                RollbackPlacementPlan(removed, placed, removedNoItemBlocks);
                 return false;
             }
             var previousCount = Items.Count;
             if (!PlaceMacroblock_NoDestruction(model, entry.Coord, entry.Direction))
             {
-                RollbackPlacementPlan(removed, placed);
+                RollbackPlacementPlan(removed, placed, removedNoItemBlocks);
                 return false;
             }
             var position = Items.Count > previousCount ? Items[previousCount].Position : GetVec3FromCoord(entry.Coord);
@@ -1067,7 +1178,8 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         return true;
     }
 
-    private void RollbackPlacementPlan(IList<ItemBlock> removed, IList<ItemBlock> placed)
+    private void RollbackPlacementPlan(IList<ItemBlock> removed, IList<ItemBlock> placed,
+        IList<NoItemReplacement> removedNoItemBlocks)
     {
         // Metadata still describes the original layout until the whole plan succeeds.
         var failedToRemove = new List<ItemBlock>();
@@ -1086,6 +1198,7 @@ public class AtlasEngine : CMapEditorPlugin, ILib
                     DirectionFromIndex(block.MacroblockDir)))
             { failedToRestore.Add(block); lastRollbackFailed = true; }
         }
+        RestoreNoItemBlocks(removedNoItemBlocks);
         if (lastRollbackFailed)
         {
             var updated = new List<ItemBlock>();

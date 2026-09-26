@@ -12,6 +12,7 @@ public class AtlasMapType : CMapType, IContext
         // 1x1 piece indices, with their files as subvariants; the final entry is the filler.
         var dock = "Lagoon\\Z_Bay\\Z_BayDock\\Z_BayDock\\";
         var bayBase = "Lagoon\\Z_Bay\\Z_BayDock\\A_BayBase\\";
+        atlas.SetNoItemBlockName(bayBase + "BaySeaBase.Macroblock.Gbx");
         atlas.SetItemBlockGroup("BayDocks", [
             [], // No air variants.
             [

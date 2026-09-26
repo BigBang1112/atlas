@@ -43,6 +43,12 @@ As item's ground is technically not the official ground, there are two variants 
 
 Fake-ground item heights are cached by XZ footprint and rebuilt when tracked item blocks change. Real-ground height is queried live so terrain edits remain visible.
 
+Collections with a placeholder item macroblock at `CollectionGroundY` can call
+`Atlas::SetNoItemBlockName("Path\\Placeholder.Macroblock.Gbx")`. A regular block
+name is also accepted. When placing a ground item block, Atlas removes matching
+placeholders across its footprint before checking and placing the new macroblock.
+If placement fails, it restores the removed placeholders as part of the rollback.
+
 ## Selection system
 
 Selection system of Atlas is fully custom based on `CustomSelectionCoords` and is colored by `CustomSelectionRGB`, so it can be unfortunately just one color at a time.

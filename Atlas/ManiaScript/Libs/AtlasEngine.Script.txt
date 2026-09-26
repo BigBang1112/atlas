@@ -48,6 +48,16 @@
   Integer DirectionOffset;
 }
 
+#Struct NoItemReplacement {
+  Int3 Coord;
+  CMapEditorPlugin::CardinalDirections Direction;
+}
+
+#Struct NoItemRemoval {
+  Boolean Success;
+  NoItemReplacement[] Removed;
+}
+
 #Struct FreeformCandidate {
   Integer Piece;
   CMapEditorPlugin::CardinalDirections Direction;
@@ -85,6 +95,7 @@ declare Vec3[] G_PreviousItems;
 declare Text[Text] G_RemoveWaterMapping;
 declare Text[] G_RestoreWaterVoidNames;
 declare Text G_WaterVoidName;
+declare Text G_NoItemBlockName;
 declare ItemBlockVariant[][][Text] G_ItemBlockGroups;
 declare Integer[Integer][Text] G_CubePieceMapping;
 declare Integer[Int3] G_GroundItemHeights;
@@ -247,6 +258,10 @@ Void SetRestoreWaterBlockMapping(Text[] _VoidNames, Text _WaterVoid) {
     G_RestoreWaterVoidNames.add(Name);
   }
   G_WaterVoidName = _WaterVoid;
+}
+
+Void SetNoItemBlockName(Text _BlockName) {
+  G_NoItemBlockName = _BlockName;
 }
 
 Void SetTowerSelectionSize(Integer _Width, Integer _Depth) {
@@ -742,16 +757,108 @@ Void Update() {
   G_PreviousMouseDown = Pressed;
 }
 
+NoItemRemoval Private_RemoveNoItemBlocks(Int3 _Coord, Integer _Width, Integer _Depth, Boolean _Ground) {
+  declare NoItemReplacement[] Removed;
+  if (!_Ground || G_NoItemBlockName == "") {
+    return NoItemRemoval { Success = True, Removed = Removed };
+  }
+  declare MacroblockModel = GetMacroblockModelFromFilePath(G_NoItemBlockName);
+  if (MacroblockModel == Null && GetBlockModelFromName(G_NoItemBlockName) == Null) {
+    log("No item block '" ^ G_NoItemBlockName ^ "' was not found.");
+    return NoItemRemoval { Success = False, Removed = Removed };
+  }
+  for (X, _Coord.X, _Coord.X + _Width - 1) {
+    for (Z, _Coord.Z, _Coord.Z + _Depth - 1) {
+      declare Cell = <X, CollectionGroundY, Z>;
+      if (MacroblockModel != Null) {
+        declare Heights = [CollectionGroundY];
+        if (_Coord.Y != CollectionGroundY) {
+          Heights.add(_Coord.Y);
+        }
+        declare RemovedAtCell = False;
+        foreach (Y in Heights) {
+          if (RemovedAtCell) {
+            break;
+          }
+          declare Candidate = <X, Y, Z>;
+          for (Direction, 0, 4 - 1) {
+            declare PreviousCount = Items.count;
+            RemoveMacroblock(MacroblockModel, Candidate, DirectionFromIndex(Direction));
+            if (Items.count >= PreviousCount) {
+              continue;
+            }
+            Removed.add(NoItemReplacement { Coord = Candidate, Direction = DirectionFromIndex(Direction) });
+            RemovedAtCell = True;
+            break;
+          }
+        }
+        continue;
+      }
+      declare Block = GetBlock(Cell);
+      if (Block == Null || Block.BlockModel.Name != G_NoItemBlockName) {
+        continue;
+      }
+      if (!RemoveBlock(Cell)) {
+        return NoItemRemoval { Success = False, Removed = Removed };
+      }
+      declare BlockDirection = CMapEditorPlugin::CardinalDirections::North;
+      if (Block.Direction == CBlock::CardinalDirections::East) {
+        BlockDirection = CMapEditorPlugin::CardinalDirections::East;
+      } else if (Block.Direction == CBlock::CardinalDirections::South) {
+        BlockDirection = CMapEditorPlugin::CardinalDirections::South;
+      } else {
+        if (Block.Direction == CBlock::CardinalDirections::West) {
+          BlockDirection = CMapEditorPlugin::CardinalDirections::West;
+        }
+      }
+      Removed.add(NoItemReplacement { Coord = Cell, Direction = BlockDirection });
+    }
+  }
+  return NoItemRemoval { Success = True, Removed = Removed };
+}
+
+Void Private_RestoreNoItemBlocks(NoItemReplacement[] _Removed) {
+  if (_Removed.count == 0) {
+    return;
+  }
+  declare MacroblockModel = GetMacroblockModelFromFilePath(G_NoItemBlockName);
+  if (MacroblockModel != Null) {
+    foreach (Entry in _Removed) {
+      if (!PlaceMacroblock_NoDestruction(MacroblockModel, Entry.Coord, Entry.Direction)) {
+        G_LastRollbackFailed = True;
+      }
+    }
+    return;
+  }
+  declare BlockModel = GetBlockModelFromName(G_NoItemBlockName);
+  foreach (Entry in _Removed) {
+    if (BlockModel == Null || !PlaceBlock(BlockModel, Entry.Coord, Entry.Direction)) {
+      G_LastRollbackFailed = True;
+    }
+  }
+}
+
 Boolean PlaceItemBlockWithFootprint(Text _MacroblockName, Int3 _Coord, CMapEditorPlugin::CardinalDirections _Direction, Boolean _Ground, Text _Family, Integer _PieceIndex, Integer _Width, Integer _Depth) {
+  G_LastRollbackFailed = False;
   if (_Width < 1 || _Depth < 1) {
     return False;
   }
   declare Model = GetMacroblockModelFromFilePath(_MacroblockName);
-  if (Model == Null || !CanPlaceMacroblock_NoDestruction(Model, _Coord, _Direction)) {
+  if (Model == Null) {
+    return False;
+  }
+  declare RemovalResult = Private_RemoveNoItemBlocks(_Coord, _Width, _Depth, _Ground);
+  if (!RemovalResult.Success) {
+    Private_RestoreNoItemBlocks(RemovalResult.Removed);
+    return False;
+  }
+  if (!CanPlaceMacroblock_NoDestruction(Model, _Coord, _Direction)) {
+    Private_RestoreNoItemBlocks(RemovalResult.Removed);
     return False;
   }
   declare PreviousCount = Items.count;
   if (!PlaceMacroblock_NoDestruction(Model, _Coord, _Direction)) {
+    Private_RestoreNoItemBlocks(RemovalResult.Removed);
     return False;
   }
   declare Vec3 Position;
@@ -1006,7 +1113,7 @@ Boolean Private_WithinMap(Int3 _Coord) {
   return _Coord.X >= 0 && _Coord.Z >= 0 && _Coord.Y >= 0 && _Coord.X < Map.Size.X && _Coord.Z < Map.Size.Z && _Coord.Y < Map.Size.Y;
 }
 
-Void Private_RollbackPlacementPlan(ItemBlock[] _Removed, ItemBlock[] _Placed) {
+Void Private_RollbackPlacementPlan(ItemBlock[] _Removed, ItemBlock[] _Placed, NoItemReplacement[] _RemovedNoItemBlocks) {
   declare ItemBlock[] FailedToRemove;
   declare Index = _Placed.count - 1;
   while (Index >= 0) {
@@ -1026,6 +1133,7 @@ Void Private_RollbackPlacementPlan(ItemBlock[] _Removed, ItemBlock[] _Placed) {
       G_LastRollbackFailed = True;
     }
   }
+  Private_RestoreNoItemBlocks(_RemovedNoItemBlocks);
   if (G_LastRollbackFailed) {
     declare ItemBlock[] Updated;
     foreach (Block in GetItemBlockList()) {
@@ -1100,12 +1208,13 @@ Boolean ExecutePlacementPlan(Placement[] _Plan) {
     declare Block = Existing[Index];
     declare Model = GetMacroblockModelFromFilePath(Block.MacroblockName);
     if (Model == Null || !RemoveMacroblock(Model, Block.MacroblockCoord, DirectionFromIndex(Block.MacroblockDir))) {
-      Private_RollbackPlacementPlan(Removed, []);
+      Private_RollbackPlacementPlan(Removed, [], []);
       return False;
     }
     Removed.add(Block);
   }
   declare ItemBlock[] Placed;
+  declare NoItemReplacement[] RemovedNoItemBlocks;
   foreach (Entry in _Plan) {
     declare AlreadyThere = False;
     if (ExistingByCell.existskey(Entry.Coord)) {
@@ -1120,13 +1229,21 @@ Boolean ExecutePlacementPlan(Placement[] _Plan) {
       continue;
     }
     declare Model = GetMacroblockModelFromFilePath(Entry.MacroblockName);
+    declare RemovalResult = Private_RemoveNoItemBlocks(Entry.Coord, MathLib::Max(1, Entry.Width), MathLib::Max(1, Entry.Depth), Entry.Ground);
+    foreach (Cell in RemovalResult.Removed) {
+      RemovedNoItemBlocks.add(Cell);
+    }
+    if (!RemovalResult.Success) {
+      Private_RollbackPlacementPlan(Removed, Placed, RemovedNoItemBlocks);
+      return False;
+    }
     if (Model == Null || !CanPlaceMacroblock_NoDestruction(Model, Entry.Coord, Entry.Direction)) {
-      Private_RollbackPlacementPlan(Removed, Placed);
+      Private_RollbackPlacementPlan(Removed, Placed, RemovedNoItemBlocks);
       return False;
     }
     declare PreviousCount = Items.count;
     if (!PlaceMacroblock_NoDestruction(Model, Entry.Coord, Entry.Direction)) {
-      Private_RollbackPlacementPlan(Removed, Placed);
+      Private_RollbackPlacementPlan(Removed, Placed, RemovedNoItemBlocks);
       return False;
     }
     declare Vec3 Position;
