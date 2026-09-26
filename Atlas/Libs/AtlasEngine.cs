@@ -99,6 +99,8 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         public AtlasEditKind Kind;
         public List<ItemBlock> Before;
         public List<ItemBlock> After;
+        public List<ItemBlock> AddedBlocks;
+        public List<ItemBlock> RemovedBlocks;
         public List<NoItemReplacement> RemovedNoItemBlocks;
         public string NoItemBlockName;
         public Int3 Start;
@@ -233,14 +235,6 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         return -1;
     }
 
-    private static List<ItemBlock> WithoutItemBlockAt(IList<ItemBlock> blocks, int index)
-    {
-        var remaining = new List<ItemBlock>();
-        for (var i = 0; i < blocks.Count; i++)
-            if (i != index) remaining.Add(blocks[i]);
-        return remaining;
-    }
-
     private static List<ItemBlock> CopyItemBlocks(IList<ItemBlock> blocks)
     {
         var copy = new List<ItemBlock>();
@@ -258,30 +252,57 @@ public class AtlasEngine : CMapEditorPlugin, ILib
     private static bool SameCoordLists(IList<Int3> first, IList<Int3> second)
     {
         if (first.Count != second.Count) return false;
-        var unmatched = CopyCoords(second);
+        var sameOrder = true;
+        for (var i = 0; i < first.Count; i++)
+            if (!SameCoord(first[i], second[i])) { sameOrder = false; break; }
+        if (sameOrder) return true;
+        var counts = new Dictionary<Int3, int>();
+        foreach (var coord in second)
+        {
+            if (!counts.ContainsKey(coord)) counts[coord] = 0;
+            counts[coord]++;
+        }
         foreach (var coord in first)
         {
-            var index = IndexOfCoord(unmatched, coord);
-            if (index < 0) return false;
-            unmatched.RemoveAt(index);
+            if (!counts.ContainsKey(coord) || counts[coord] == 0) return false;
+            counts[coord]--;
         }
         return true;
     }
 
     private static bool SameItemBlockLists(IList<ItemBlock> first, IList<ItemBlock> second)
     {
-        return first.Count == second.Count && ItemBlockDifference(first, second).Count == 0;
+        if (first.Count != second.Count) return false;
+        var sameOrder = true;
+        for (var i = 0; i < first.Count; i++)
+            if (!SameItemBlock(first[i], second[i])) { sameOrder = false; break; }
+        return sameOrder || ItemBlockDifference(first, second).Count == 0;
     }
 
     private static List<ItemBlock> ItemBlockDifference(IList<ItemBlock> first, IList<ItemBlock> second)
     {
-        var unmatched = CopyItemBlocks(second);
+        var unmatched = new Dictionary<Int3, List<ItemBlock>>();
+        foreach (var block in second)
+        {
+            var coord = block.MacroblockCoord;
+            if (!unmatched.ContainsKey(coord)) unmatched[coord] = new List<ItemBlock>();
+            var bucket = unmatched[coord];
+            bucket.Add(block);
+            unmatched[coord] = bucket;
+        }
         var result = new List<ItemBlock>();
         foreach (var block in first)
         {
-            var index = IndexOfItemBlock(unmatched, block);
+            var coord = block.MacroblockCoord;
+            if (!unmatched.ContainsKey(coord)) { result.Add(block); continue; }
+            var bucket = unmatched[coord];
+            var index = IndexOfItemBlock(bucket, block);
             if (index < 0) result.Add(block);
-            else unmatched.RemoveAt(index);
+            else
+            {
+                bucket.RemoveAt(index);
+                unmatched[coord] = bucket;
+            }
         }
         return result;
     }
@@ -289,11 +310,15 @@ public class AtlasEngine : CMapEditorPlugin, ILib
     private void RecordItemEdit(IList<ItemBlock> before, IList<ItemBlock> after,
         IList<NoItemReplacement> removedNoItemBlocks)
     {
-        if (replayingHistory || SameItemBlockLists(before, after)) return;
+        if (replayingHistory) return;
+        var removed = ItemBlockDifference(before, after);
+        var added = ItemBlockDifference(after, before);
+        if (removed.Count == 0 && added.Count == 0) return;
         var placeholders = new List<NoItemReplacement>();
         foreach (var entry in removedNoItemBlocks) placeholders.Add(entry);
         PushUndoEdit(new AtlasEdit { Kind = AtlasEditKind.Item,
             Before = CopyItemBlocks(before), After = CopyItemBlocks(after),
+            AddedBlocks = added, RemovedBlocks = removed,
             RemovedNoItemBlocks = placeholders, NoItemBlockName = noItemBlockName });
     }
 
@@ -319,19 +344,18 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         redoEdits.Clear();
     }
 
-    private bool ApplyItemSnapshot(IList<ItemBlock> target)
+    private bool ApplyItemSnapshot(IList<ItemBlock> target, IList<ItemBlock> toRemove,
+        IList<ItemBlock> toPlaceBlocks)
     {
-        var current = CopyItemBlocks(GetItemBlockList());
-        var toRemove = ItemBlockDifference(current, target);
         var toPlace = new List<Placement>();
-        foreach (var block in ItemBlockDifference(target, current))
+        foreach (var block in toPlaceBlocks)
         {
             toPlace.Add(new Placement { Coord = block.MacroblockCoord,
                 MacroblockName = block.MacroblockName, Direction = DirectionFromIndex(block.MacroblockDir),
                 Ground = block.Ground, Family = block.Family, PieceIndex = block.PieceIndex,
                 Width = block.Width, Depth = block.Depth });
         }
-        if (!ApplyResolvedChanges(toRemove, toPlace, GetRemovedWater())) return false;
+        if (!ApplyResolvedChangesCore(toRemove, toPlace, GetRemovedWater(), false)) return false;
         SetItemBlockList(target);
         SnapshotItems();
         return true;
@@ -368,14 +392,14 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         var succeeded = false;
         if (edit.Kind == AtlasEditKind.Item)
         {
-            succeeded = ApplyItemSnapshot(edit.Before);
+            succeeded = ApplyItemSnapshot(edit.Before, edit.AddedBlocks, edit.RemovedBlocks);
             if (succeeded)
             {
                 lastRollbackFailed = false;
                 Log($"Atlas undo: restoring {edit.RemovedNoItemBlocks.Count} no-item block(s).");
                 RestoreNoItemBlocks(edit.RemovedNoItemBlocks);
                 succeeded = !lastRollbackFailed;
-                if (!succeeded) ApplyItemSnapshot(edit.After);
+                if (!succeeded) ApplyItemSnapshot(edit.After, edit.RemovedBlocks, edit.AddedBlocks);
                 else SnapshotItems();
             }
         }
@@ -410,7 +434,7 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         if (edit.Kind == AtlasEditKind.Item) noItemBlockName = edit.NoItemBlockName;
         replayingHistory = true;
         var succeeded = edit.Kind == AtlasEditKind.Item
-            ? ApplyItemSnapshot(edit.After) : ReplayWaterEdit(edit, false);
+            ? ApplyItemSnapshot(edit.After, edit.RemovedBlocks, edit.AddedBlocks) : ReplayWaterEdit(edit, false);
         if (edit.Kind != AtlasEditKind.Item)
         {
             if (succeeded) SetRemovedWater(edit.AfterWater);
@@ -880,26 +904,33 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         }
         Metadata<List<Int3>>.For(Map, out var storedWater, name: "Atlas_RemovedWater");
         var succeeded = true;
-        var availableVoidCoords = new List<Int3>();
+        var availableVoidCoords = new Dictionary<Int3, bool>();
         var selectionCoords = new List<Int3>();
+        var selectedCoords = new Dictionary<Int3, bool>();
+        var selectedColumns = new Dictionary<Int3, bool>();
         foreach (var coord in coords)
-            if (!selectionCoords.Contains(coord)) selectionCoords.Add(coord);
+            if (!selectedCoords.ContainsKey(coord))
+            {
+                selectionCoords.Add(coord);
+                selectedCoords[coord] = true;
+                selectedColumns[new Int3(coord.X, 0, coord.Z)] = true;
+            }
 
         // Snapshot the configured void blocks before phase 1 changes Blocks.
         foreach (var block in Blocks)
         {
             if (block == null) continue;
-            if (restoreWaterVoidNames.Contains(block.BlockModel.Name) && !availableVoidCoords.Contains(block.Coord))
-                availableVoidCoords.Add(block.Coord);
+            if (restoreWaterVoidNames.Contains(block.BlockModel.Name))
+                availableVoidCoords[block.Coord] = true;
         }
 
         // 1. Try removing configured terrain and border void blocks at every selected coordinate.
         foreach (var groundCoord in selectionCoords)
         {
             var voidCoord = groundCoord;
-            if (!availableVoidCoords.Contains(voidCoord))
+            if (!availableVoidCoords.ContainsKey(voidCoord))
                 voidCoord = new Int3(groundCoord.X, CollectionGroundY + 1, groundCoord.Z);
-            if (!availableVoidCoords.Contains(voidCoord)) continue;
+            if (!availableVoidCoords.ContainsKey(voidCoord)) continue;
             if (!RemoveBlock(voidCoord))
             {
                 Log($"RestoreWater failed: could not remove configured void block at {voidCoord}.");
@@ -921,6 +952,7 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         }
 
         // 3. Place water within the selection, removing matching metadata on success.
+        var restoredColumns = new Dictionary<Int3, bool>();
         foreach (var groundCoord in terrainReadyCoords)
         {
             if (!PlaceBlock(water, groundCoord, CardinalDirections.North))
@@ -929,10 +961,16 @@ public class AtlasEngine : CMapEditorPlugin, ILib
                 succeeded = false;
                 continue;
             }
-            var removedMetadata = new List<Int3>();
+            restoredColumns[new Int3(groundCoord.X, 0, groundCoord.Z)] = true;
+        }
+        if (restoredColumns.Count > 0)
+        {
+            var remainingWater = new List<Int3>();
             foreach (var storedCoord in storedWater.Value!)
-                if (storedCoord.X == groundCoord.X && storedCoord.Z == groundCoord.Z) removedMetadata.Add(storedCoord);
-            foreach (var storedCoord in removedMetadata) storedWater.Value.Remove(storedCoord);
+                if (!restoredColumns.ContainsKey(new Int3(storedCoord.X, 0, storedCoord.Z)))
+                    remainingWater.Add(storedCoord);
+            storedWater.Value!.Clear();
+            foreach (var storedCoord in remainingWater) storedWater.Value.Add(storedCoord);
         }
 
         // 4. Try placing the configured border void outside the selection. Failure is expected.
@@ -943,6 +981,7 @@ public class AtlasEngine : CMapEditorPlugin, ILib
             if (beachVoid != null)
             {
                 var outsideCoords = new List<Int3>();
+                var outsideSeen = new Dictionary<Int3, bool>();
                 foreach (var coord in selectionCoords)
                 {
                     var neighbors = new List<Int3>
@@ -962,10 +1001,10 @@ public class AtlasEngine : CMapEditorPlugin, ILib
                     };
                     foreach (var neighbor in neighbors)
                     {
-                        var insideSelection = false;
-                        foreach (var selected in selectionCoords)
-                            if (selected.X == neighbor.X && selected.Z == neighbor.Z) insideSelection = true;
-                        if (!insideSelection && !outsideCoords.Contains(neighbor)) outsideCoords.Add(neighbor);
+                        if (selectedColumns.ContainsKey(new Int3(neighbor.X, 0, neighbor.Z)) ||
+                            outsideSeen.ContainsKey(neighbor)) continue;
+                        outsideCoords.Add(neighbor);
+                        outsideSeen[neighbor] = true;
                     }
                 }
                 foreach (var coord in outsideCoords)
@@ -1527,36 +1566,44 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         var wasReplaying = replayingHistory;
         if (!wasReplaying) ClearAtlasEditHistory();
         replayingHistory = true;
-        var result = ApplyResolvedChangesCore(toRemove, toPlace, removedWater);
+        var result = ApplyResolvedChangesCore(toRemove, toPlace, removedWater, true);
         replayingHistory = wasReplaying;
         return result;
     }
 
     private bool ApplyResolvedChangesCore(IList<ItemBlock> toRemove, IList<Placement> toPlace,
-        IList<Int3> removedWater)
+        IList<Int3> removedWater, bool applyWater)
     {
         lastRollbackFailed = false;
         var removed = new List<ItemBlock>();
         Metadata<List<ItemBlock>>.For(Map, out var storedBlocks, name: "Atlas_ItemBlocks");
+        var remaining = CopyItemBlocks(storedBlocks.Value!);
         foreach (var block in toRemove)
         {
-            var index = IndexOfItemBlock(storedBlocks.Value!, block);
-            if (index < 0) { RestoreRemoved(removed); return false; }
-            var model = GetMacroblockModelFromFilePath(block.MacroblockName);
-            if (model == null || !RemoveMacroblock(model, block.MacroblockCoord, DirectionFromIndex(block.MacroblockDir)))
+            var index = IndexOfItemBlock(remaining, block);
+            if (index < 0)
             {
+                if (removed.Count > 0) SetItemBlockList(remaining);
                 RestoreRemoved(removed);
                 return false;
             }
-            SetItemBlockList(WithoutItemBlockAt(storedBlocks.Value!, index));
+            var model = GetMacroblockModelFromFilePath(block.MacroblockName);
+            if (model == null || !RemoveMacroblock(model, block.MacroblockCoord, DirectionFromIndex(block.MacroblockDir)))
+            {
+                if (removed.Count > 0) SetItemBlockList(remaining);
+                RestoreRemoved(removed);
+                return false;
+            }
+            remaining.RemoveAt(index);
             removed.Add(block);
         }
+        if (removed.Count > 0) SetItemBlockList(remaining);
         if (toPlace.Count > 0 && !ExecutePlacementPlan(toPlace))
         {
             RestoreRemoved(removed);
             return false;
         }
-        SetRemovedWater(removedWater);
+        if (applyWater) SetRemovedWater(removedWater);
         SnapshotItems();
         return true;
     }
