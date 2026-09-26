@@ -132,8 +132,10 @@ public class AtlasMapType : CMapType, IContext
                 <quad pos="34 -34" z-index="1" size="28 8" bgcolor="3670" />
                 <label id="AtlasRestoreWater" pos="35 -35" z-index="2" size="26 6" text="Restore water" textsize="2" textcolor="fff" scriptevents="1" />
 
-                <quad pos="3 -46" z-index="1" size="59 8" bgcolor="4a80" />
-                <label id="AtlasNone" pos="4 -47" z-index="2" size="57 6" text="No selection" textsize="2" textcolor="fff" scriptevents="1" />
+                <quad pos="3 -46" z-index="1" size="28 8" bgcolor="a640" />
+                <label id="AtlasRemoveDocks" pos="4 -47" z-index="2" size="26 6" text="Remove docks" textsize="2" textcolor="fff" scriptevents="1" />
+                <quad pos="34 -46" z-index="1" size="28 8" bgcolor="4a80" />
+                <label id="AtlasNone" pos="35 -47" z-index="2" size="26 6" text="No selection" textsize="2" textcolor="fff" scriptevents="1" />
 
                 <quad pos="3 -56" z-index="1" size="28 8" bgcolor="7540" />
                 <label id="AtlasUndo" pos="4 -57" z-index="2" size="26 6" text="Undo item" textsize="2" textcolor="fff" scriptevents="1" />
@@ -167,6 +169,7 @@ public class AtlasMapType : CMapType, IContext
                       else if (Event.ControlId == "AtlasLine") Status.Value = "Mode: Line";
                       else if (Event.ControlId == "AtlasRemoveWater") Status.Value = "Mode: Remove water";
                       else if (Event.ControlId == "AtlasRestoreWater") Status.Value = "Mode: Restore water";
+                      else if (Event.ControlId == "AtlasRemoveDocks") Status.Value = "Mode: Remove docks";
                       else if (Event.ControlId == "AtlasNone") Status.Value = "Mode: No selection";
                                             else if (Event.ControlId == "AtlasConnections") {
                                                 ConnectExisting = !ConnectExisting;
@@ -206,6 +209,7 @@ public class AtlasMapType : CMapType, IContext
             else if (action == "AtlasLine") atlas.SetSelectionMode(AtlasEngine.SelectionMode.Line1D);
             else if (action == "AtlasRemoveWater") atlas.SetSelectionMode(AtlasEngine.SelectionMode.RemoveWater);
             else if (action == "AtlasRestoreWater") atlas.SetSelectionMode(AtlasEngine.SelectionMode.RestoreWater);
+            else if (action == "AtlasRemoveDocks") atlas.SetSelectionMode(AtlasEngine.SelectionMode.RemoveItemGroup);
             else if (action == "AtlasNone") atlas.SetSelectionMode(AtlasEngine.SelectionMode.None);
             else if (action == "AtlasConnections")
             {
@@ -234,6 +238,11 @@ public class AtlasMapType : CMapType, IContext
             {
                 if (!atlas.PlaceFreeform1x1(change.Coords, "BayDocks"))
                     Log("BayDocks placement failed.");
+            }
+            else if (atlas.Mode == AtlasEngine.SelectionMode.RemoveItemGroup)
+            {
+                if (!atlas.RemoveFreeform1x1(change.Coords, "BayDocks"))
+                    Log("BayDocks removal failed.");
             }
             else if (atlas.Mode != AtlasEngine.SelectionMode.RemoveWater &&
                      atlas.Mode != AtlasEngine.SelectionMode.RestoreWater)

@@ -14,6 +14,7 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         Ground2D,
         Line1D,
         Tower,
+        RemoveItemGroup,
         RemoveWater,
         RestoreWater
     }
@@ -97,6 +98,7 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         public List<ItemBlock> AddedBlocks;
         public List<ItemBlock> RemovedBlocks;
         public List<NoItemReplacement> RemovedNoItemBlocks;
+        public List<NoItemReplacement> AddedNoItemBlocks;
         public string NoItemBlockName;
     }
 
@@ -270,15 +272,44 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         return true;
     }
 
+    private static List<ItemBlock> ItemBlockDifference(IList<ItemBlock> first, IList<ItemBlock> second)
+    {
+        var unmatched = GroupItemBlocksByCoord(second);
+        var result = new List<ItemBlock>();
+        foreach (var block in first)
+        {
+            var coord = block.MacroblockCoord;
+            if (!unmatched.ContainsKey(coord)) { result.Add(block); continue; }
+            var bucket = unmatched[coord];
+            var index = IndexOfItemBlock(bucket, block);
+            if (index < 0) result.Add(block);
+            else
+            {
+                bucket.RemoveAt(index);
+                unmatched[coord] = bucket;
+            }
+        }
+        return result;
+    }
+
     private void PushItemEdit(IList<ItemBlock> removed, IList<ItemBlock> added,
         IList<NoItemReplacement> removedNoItemBlocks)
+    {
+        PushItemEditWithBase(removed, added, removedNoItemBlocks, new List<NoItemReplacement>());
+    }
+
+    private void PushItemEditWithBase(IList<ItemBlock> removed, IList<ItemBlock> added,
+        IList<NoItemReplacement> removedNoItemBlocks, IList<NoItemReplacement> addedNoItemBlocks)
     {
         if (replayingHistory || (removed.Count == 0 && added.Count == 0)) return;
         var placeholders = new List<NoItemReplacement>();
         foreach (var entry in removedNoItemBlocks) placeholders.Add(entry);
+        var addedPlaceholders = new List<NoItemReplacement>();
+        foreach (var entry in addedNoItemBlocks) addedPlaceholders.Add(entry);
         PushUndoEdit(new AtlasEdit {
             AddedBlocks = CopyItemBlocks(added), RemovedBlocks = CopyItemBlocks(removed),
-            RemovedNoItemBlocks = placeholders, NoItemBlockName = noItemBlockName });
+            RemovedNoItemBlocks = placeholders, AddedNoItemBlocks = addedPlaceholders,
+            NoItemBlockName = noItemBlockName });
     }
 
     private void PushUndoEdit(AtlasEdit edit)
@@ -325,7 +356,17 @@ public class AtlasEngine : CMapEditorPlugin, ILib
             Log($"Atlas undo: restoring {edit.RemovedNoItemBlocks.Count} no-item block(s).");
             RestoreNoItemBlocks(edit.RemovedNoItemBlocks);
             succeeded = !lastRollbackFailed;
-            if (!succeeded) ApplyItemChanges(edit.RemovedBlocks, edit.AddedBlocks);
+            if (!succeeded)
+            {
+                var rolledBack = ApplyItemChanges(edit.RemovedBlocks, edit.AddedBlocks);
+                if (rolledBack && edit.AddedNoItemBlocks.Count > 0)
+                {
+                    lastRollbackFailed = false;
+                    RestoreNoItemBlocks(edit.AddedNoItemBlocks);
+                    rolledBack = !lastRollbackFailed;
+                }
+                if (!rolledBack) lastRollbackFailed = true;
+            }
             else SnapshotItems();
         }
         replayingHistory = false;
@@ -350,6 +391,14 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         noItemBlockName = edit.NoItemBlockName;
         replayingHistory = true;
         var succeeded = ApplyItemChanges(edit.RemovedBlocks, edit.AddedBlocks);
+        if (succeeded && edit.AddedNoItemBlocks.Count > 0)
+        {
+            lastRollbackFailed = false;
+            RestoreNoItemBlocks(edit.AddedNoItemBlocks);
+            succeeded = !lastRollbackFailed;
+            if (!succeeded && !ApplyItemChanges(edit.AddedBlocks, edit.RemovedBlocks))
+                lastRollbackFailed = true;
+        }
         replayingHistory = false;
         noItemBlockName = configuredNoItemBlockName;
         if (!succeeded)
@@ -535,7 +584,12 @@ public class AtlasEngine : CMapEditorPlugin, ILib
             SetCurrentSelection(GetRemovedWater(), true);
             CustomSelectionRGB = new Vec3(0.55f, 0.30f, 0.10f);
         }
-        else ClearSelection();
+        else
+        {
+            ClearSelection();
+            CustomSelectionRGB = nextMode == SelectionMode.RemoveItemGroup
+                ? new Vec3(0.85f, 0.20f, 0.15f) : new Vec3(1.0f, 1.0f, 1.0f);
+        }
     }
 
     public void SetSelectionChangeEventsEnabled(bool enabled)
@@ -614,7 +668,8 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         var pressed = Input.MouseLeftButton;
         if (mode == SelectionMode.None) { previousMouseDown = pressed; return; }
         var cursorCoord = Cursor.Coord;
-        if (mode == SelectionMode.Ground2D || mode == SelectionMode.RemoveWater || mode == SelectionMode.RestoreWater)
+        if (mode == SelectionMode.Ground2D || mode == SelectionMode.RemoveItemGroup ||
+            mode == SelectionMode.RemoveWater || mode == SelectionMode.RestoreWater)
         {
             cursorCoord = GetMouseCoordOnGround();
             if (mode == SelectionMode.RestoreWater)
@@ -738,10 +793,12 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         for (var x = minX; x <= maxX; x++)
         for (var z = minZ; z <= maxZ; z++)
         {
-            if (selectionMode == SelectionMode.Ground2D || selectionMode == SelectionMode.RemoveWater ||
+            if (selectionMode == SelectionMode.Ground2D || selectionMode == SelectionMode.RemoveItemGroup ||
+                selectionMode == SelectionMode.RemoveWater ||
                 selectionMode == SelectionMode.RestoreWater)
             {
-                var y = selectionMode == SelectionMode.Ground2D ? GetFakeGroundHeight(x, z) : CollectionGroundY;
+                var y = selectionMode == SelectionMode.Ground2D || selectionMode == SelectionMode.RemoveItemGroup
+                    ? GetFakeGroundHeight(x, z) : CollectionGroundY;
                 result.Add(new Int3(x, y, z));
             }
             else if (selectionMode == SelectionMode.Plane2D) result.Add(new Int3(x, start.Y, z));
@@ -1951,6 +2008,132 @@ public class AtlasEngine : CMapEditorPlugin, ILib
 
     public bool PlaceFreeform1x1(IList<Int3> selection, string family) =>
         ExecutePlacementPlan(ResolveFreeform1x1(selection, family));
+
+    /// <summary>Remove selected ground pieces from a freeform 1x1 group and resolve its exposed edges.</summary>
+    public bool RemoveFreeform1x1(IList<Int3> selection, string family)
+    {
+        if (selection.Count == 0) return false;
+        var selected = new Dictionary<Int3, bool>();
+        foreach (var coord in selection)
+        {
+            if (!WithinMap(coord)) return false;
+            selected[coord] = true;
+        }
+        var before = CopyItemBlocks(GetItemBlockList());
+        var toRemove = new List<ItemBlock>();
+        var removedCoords = new Dictionary<Int3, bool>();
+        foreach (var block in before)
+        {
+            if (!selected.ContainsKey(block.MacroblockCoord) || block.Family != family) continue;
+            if (!block.Ground || block.Width != 1 || block.Depth != 1) return false;
+            toRemove.Add(block);
+            removedCoords[block.MacroblockCoord] = true;
+        }
+        if (toRemove.Count == 0) return false;
+
+        var minX = toRemove[0].MacroblockCoord.X;
+        var maxX = minX;
+        var minZ = toRemove[0].MacroblockCoord.Z;
+        var maxZ = minZ;
+        foreach (var block in toRemove)
+        {
+            minX = Math.Min(minX, block.MacroblockCoord.X);
+            maxX = Math.Max(maxX, block.MacroblockCoord.X);
+            minZ = Math.Min(minZ, block.MacroblockCoord.Z);
+            maxZ = Math.Max(maxZ, block.MacroblockCoord.Z);
+        }
+        var occupied = new Dictionary<Int3, bool>();
+        var neighbors = new List<ItemBlock>();
+        foreach (var block in before)
+        {
+            if (block.Family != family || !block.Ground || block.Width != 1 || block.Depth != 1 ||
+                removedCoords.ContainsKey(block.MacroblockCoord)) continue;
+            var coord = block.MacroblockCoord;
+            if (coord.X < minX - 2 || coord.X > maxX + 2 ||
+                coord.Z < minZ - 2 || coord.Z > maxZ + 2) continue;
+            occupied[coord] = true;
+            var touchesRemoval = false;
+            for (var dx = -1; dx <= 1; dx++)
+            for (var dz = -1; dz <= 1; dz++)
+                if (removedCoords.ContainsKey(new Int3(coord.X + dx, coord.Y, coord.Z + dz)))
+                    touchesRemoval = true;
+            if (touchesRemoval) neighbors.Add(block);
+        }
+        var hasFiller = VariantFor(family, 14, true, toRemove[0].MacroblockCoord).MacroblockName != "";
+        var plan = new List<Placement>();
+        foreach (var block in neighbors)
+        {
+            var coord = block.MacroblockCoord;
+            var desired = ResolveFreeformMasks(FreeformOccupiedSides(occupied, coord),
+                FreeformOccupiedDiagonals(occupied, coord), hasFiller);
+            if (block.PieceIndex == desired.Piece &&
+                LogicalFreeformDirectionFor(block) == desired.Direction) continue;
+            var variant = VariantFor(family, desired.Piece, true, coord);
+            if (variant.MacroblockName == "") return false;
+            plan.Add(new Placement { Coord = coord, MacroblockName = variant.MacroblockName,
+                Direction = OffsetDirection(desired.Direction,
+                    variant.DirectionOffset + FreeformModelDirectionOffset(desired.Piece)),
+                Ground = true, Family = family, PieceIndex = desired.Piece, Width = 1, Depth = 1 });
+        }
+        var baseMacroblock = noItemBlockName == "" ? null : GetMacroblockModelFromFilePath(noItemBlockName);
+        var baseBlock = noItemBlockName == "" || baseMacroblock != null
+            ? null : GetBlockModelFromName(noItemBlockName);
+        if (noItemBlockName != "" && baseMacroblock == null && baseBlock == null)
+        {
+            Log($"No item block '{noItemBlockName}' was not found.");
+            return false;
+        }
+
+        var wasReplaying = replayingHistory;
+        replayingHistory = true;
+        var applied = ApplyResolvedChangesCore(toRemove, plan, GetRemovedWater(), false);
+        replayingHistory = wasReplaying;
+        if (!applied)
+        {
+            if (lastRollbackFailed) ClearAtlasEditHistory();
+            return false;
+        }
+
+        var after = CopyItemBlocks(GetItemBlockList());
+        var addedBases = new List<NoItemReplacement>();
+        var coveredColumns = new Dictionary<Int3, bool>();
+        foreach (var block in after)
+            if (block.Ground)
+                for (var x = block.MacroblockCoord.X; x < block.MacroblockCoord.X + Math.Max(1, block.Width); x++)
+                for (var z = block.MacroblockCoord.Z; z < block.MacroblockCoord.Z + Math.Max(1, block.Depth); z++)
+                    coveredColumns[new Int3(x, 0, z)] = true;
+        var baseSucceeded = true;
+        var baseColumns = new Dictionary<Int3, bool>();
+        foreach (var block in toRemove)
+        {
+            var coord = block.MacroblockCoord;
+            var column = new Int3(coord.X, 0, coord.Z);
+            if (baseColumns.ContainsKey(column)) continue;
+            baseColumns[column] = true;
+            if (coveredColumns.ContainsKey(column) || noItemBlockName == "") continue;
+            var baseCoord = new Int3(coord.X, CollectionGroundY, coord.Z);
+            var placed = baseMacroblock != null
+                ? PlaceMacroblock_NoDestruction(baseMacroblock, baseCoord, CardinalDirections.North)
+                : PlaceBlock(baseBlock, baseCoord, CardinalDirections.North);
+            if (!placed && coord.Y != CollectionGroundY)
+            {
+                baseCoord = coord;
+                placed = baseMacroblock != null
+                    ? PlaceMacroblock_NoDestruction(baseMacroblock, baseCoord, CardinalDirections.North)
+                    : PlaceBlock(baseBlock, baseCoord, CardinalDirections.North);
+            }
+            if (placed) addedBases.Add(new NoItemReplacement { Coord = baseCoord,
+                Direction = CardinalDirections.North });
+            else
+            {
+                Log($"Could not restore no-item block '{noItemBlockName}' at {coord}.");
+                baseSucceeded = false;
+            }
+        }
+        PushItemEditWithBase(ItemBlockDifference(before, after), ItemBlockDifference(after, before),
+            new List<NoItemReplacement>(), addedBases);
+        return baseSucceeded;
+    }
 
     public List<Placement> ResolveCube2x2(IList<Int3> selection, string family)
     {

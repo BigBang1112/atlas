@@ -35,8 +35,10 @@ ManialinkText = """<manialink version="3">
     <quad pos="34 -34" z-index="1" size="28 8" bgcolor="3670" />
     <label id="AtlasRestoreWater" pos="35 -35" z-index="2" size="26 6" text="Restore water" textsize="2" textcolor="fff" scriptevents="1" />
 
-    <quad pos="3 -46" z-index="1" size="59 8" bgcolor="4a80" />
-    <label id="AtlasNone" pos="4 -47" z-index="2" size="57 6" text="No selection" textsize="2" textcolor="fff" scriptevents="1" />
+    <quad pos="3 -46" z-index="1" size="28 8" bgcolor="a640" />
+    <label id="AtlasRemoveDocks" pos="4 -47" z-index="2" size="26 6" text="Remove docks" textsize="2" textcolor="fff" scriptevents="1" />
+    <quad pos="34 -46" z-index="1" size="28 8" bgcolor="4a80" />
+    <label id="AtlasNone" pos="35 -47" z-index="2" size="26 6" text="No selection" textsize="2" textcolor="fff" scriptevents="1" />
 
     <quad pos="3 -56" z-index="1" size="28 8" bgcolor="7540" />
     <label id="AtlasUndo" pos="4 -57" z-index="2" size="26 6" text="Undo item" textsize="2" textcolor="fff" scriptevents="1" />
@@ -70,6 +72,7 @@ ManialinkText = """<manialink version="3">
           else if (Event.ControlId == "AtlasLine") Status.Value = "Mode: Line";
           else if (Event.ControlId == "AtlasRemoveWater") Status.Value = "Mode: Remove water";
           else if (Event.ControlId == "AtlasRestoreWater") Status.Value = "Mode: Restore water";
+          else if (Event.ControlId == "AtlasRemoveDocks") Status.Value = "Mode: Remove docks";
           else if (Event.ControlId == "AtlasNone") Status.Value = "Mode: No selection";
                                 else if (Event.ControlId == "AtlasConnections") {
                                     ConnectExisting = !ConnectExisting;
@@ -114,26 +117,30 @@ while (True) {
         } else if (Action == "AtlasRestoreWater") {
           Atlas::SetSelectionMode(Atlas::C_SelectionMode_RestoreWater);
         } else {
-          if (Action == "AtlasNone") {
+          if (Action == "AtlasRemoveDocks") {
+            Atlas::SetSelectionMode(Atlas::C_SelectionMode_RemoveItemGroup);
+          } else if (Action == "AtlasNone") {
             Atlas::SetSelectionMode(Atlas::C_SelectionMode_None);
-          } else if (Action == "AtlasConnections") {
-            if (Atlas::GetFreeformMode() == Atlas::C_FreeformPlacementMode_ConnectExisting) {
-              Atlas::SetFreeformPlacementMode(Atlas::C_FreeformPlacementMode_SelectionOnly);
-            } else {
-              Atlas::SetFreeformPlacementMode(Atlas::C_FreeformPlacementMode_ConnectExisting);
-            }
           } else {
-            if (Action == "AtlasUndo") {
+            if (Action == "AtlasConnections") {
+              if (Atlas::GetFreeformMode() == Atlas::C_FreeformPlacementMode_ConnectExisting) {
+                Atlas::SetFreeformPlacementMode(Atlas::C_FreeformPlacementMode_SelectionOnly);
+              } else {
+                Atlas::SetFreeformPlacementMode(Atlas::C_FreeformPlacementMode_ConnectExisting);
+              }
+            } else if (Action == "AtlasUndo") {
               if (!Atlas::GetCanUndoAtlasEdit()) {
                 log("No item edit to undo.");
               } else if (!Atlas::UndoAtlasEdit()) {
                 log("Atlas undo failed.");
               }
-            } else if (Action == "AtlasRedo") {
-              if (!Atlas::GetCanRedoAtlasEdit()) {
-                log("No item edit to redo.");
-              } else if (!Atlas::RedoAtlasEdit()) {
-                log("Atlas redo failed.");
+            } else {
+              if (Action == "AtlasRedo") {
+                if (!Atlas::GetCanRedoAtlasEdit()) {
+                  log("No item edit to redo.");
+                } else if (!Atlas::RedoAtlasEdit()) {
+                  log("Atlas redo failed.");
+                }
               }
             }
           }
@@ -148,8 +155,14 @@ while (True) {
       if (!Atlas::PlaceFreeform1x1(Change.Coords, "BayDocks")) {
         log("BayDocks placement failed.");
       }
-    } else if (Atlas::GetMode() != Atlas::C_SelectionMode_RemoveWater && Atlas::GetMode() != Atlas::C_SelectionMode_RestoreWater) {
-      Atlas::SetCurrentSelection(Change.Coords, True);
+    } else if (Atlas::GetMode() == Atlas::C_SelectionMode_RemoveItemGroup) {
+      if (!Atlas::RemoveFreeform1x1(Change.Coords, "BayDocks")) {
+        log("BayDocks removal failed.");
+      }
+    } else {
+      if (Atlas::GetMode() != Atlas::C_SelectionMode_RemoveWater && Atlas::GetMode() != Atlas::C_SelectionMode_RestoreWater) {
+        Atlas::SetCurrentSelection(Change.Coords, True);
+      }
     }
   }
   foreach (Removal in Atlas::GetItemRemovals()) {

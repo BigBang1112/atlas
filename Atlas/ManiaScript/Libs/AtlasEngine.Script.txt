@@ -62,6 +62,7 @@
   ItemBlock[] AddedBlocks;
   ItemBlock[] RemovedBlocks;
   NoItemReplacement[] RemovedNoItemBlocks;
+  NoItemReplacement[] AddedNoItemBlocks;
   Text NoItemBlockName;
 }
 
@@ -77,8 +78,9 @@
 #Const C_SelectionMode_Ground2D 4
 #Const C_SelectionMode_Line1D 5
 #Const C_SelectionMode_Tower 6
-#Const C_SelectionMode_RemoveWater 7
-#Const C_SelectionMode_RestoreWater 8
+#Const C_SelectionMode_RemoveItemGroup 7
+#Const C_SelectionMode_RemoveWater 8
+#Const C_SelectionMode_RestoreWater 9
 #Const C_FreeformPlacementMode_SelectionOnly 0
 #Const C_FreeformPlacementMode_ConnectExisting 1
 
@@ -224,6 +226,27 @@ Boolean Private_MatchesItemBlockChanges(ItemBlock[] _Blocks, ItemBlock[] _Expect
   return True;
 }
 
+ItemBlock[] Private_ItemBlockDifference(ItemBlock[] _First, ItemBlock[] _Second) {
+  declare Unmatched = Private_GroupItemBlocksByCoord(_Second);
+  declare ItemBlock[] Result;
+  foreach (Block in _First) {
+    declare Coord = Block.MacroblockCoord;
+    if (!Unmatched.existskey(Coord)) {
+      Result.add(Block);
+      continue;
+    }
+    declare Bucket = Unmatched[Coord];
+    declare Index = Private_IndexOfItemBlock(Bucket, Block);
+    if (Index < 0) {
+      Result.add(Block);
+    } else {
+      Bucket.removekey(Index);
+      Unmatched[Coord] = Bucket;
+    }
+  }
+  return Result;
+}
+
 Void Private_PushUndoEdit(AtlasEdit _Edit) {
   G_UndoEdits.add(_Edit);
   if (G_UndoEdits.count > 64) {
@@ -232,7 +255,7 @@ Void Private_PushUndoEdit(AtlasEdit _Edit) {
   G_RedoEdits.clear();
 }
 
-Void Private_PushItemEdit(ItemBlock[] _Removed, ItemBlock[] _Added, NoItemReplacement[] _RemovedNoItemBlocks) {
+Void Private_PushItemEditWithBase(ItemBlock[] _Removed, ItemBlock[] _Added, NoItemReplacement[] _RemovedNoItemBlocks, NoItemReplacement[] _AddedNoItemBlocks) {
   if (G_ReplayingHistory || (_Removed.count == 0 && _Added.count == 0)) {
     return;
   }
@@ -240,7 +263,15 @@ Void Private_PushItemEdit(ItemBlock[] _Removed, ItemBlock[] _Added, NoItemReplac
   foreach (Entry in _RemovedNoItemBlocks) {
     Placeholders.add(Entry);
   }
-  Private_PushUndoEdit(AtlasEdit { AddedBlocks = Private_CopyItemBlocks(_Added), RemovedBlocks = Private_CopyItemBlocks(_Removed), RemovedNoItemBlocks = Placeholders, NoItemBlockName = G_NoItemBlockName });
+  declare NoItemReplacement[] AddedPlaceholders;
+  foreach (Entry in _AddedNoItemBlocks) {
+    AddedPlaceholders.add(Entry);
+  }
+  Private_PushUndoEdit(AtlasEdit { AddedBlocks = Private_CopyItemBlocks(_Added), RemovedBlocks = Private_CopyItemBlocks(_Removed), RemovedNoItemBlocks = Placeholders, AddedNoItemBlocks = AddedPlaceholders, NoItemBlockName = G_NoItemBlockName });
+}
+
+Void Private_PushItemEdit(ItemBlock[] _Removed, ItemBlock[] _Added, NoItemReplacement[] _RemovedNoItemBlocks) {
+  Private_PushItemEditWithBase(_Removed, _Added, _RemovedNoItemBlocks, []);
 }
 
 Void ClearAtlasEditHistory() {
@@ -716,7 +747,15 @@ Boolean UndoAtlasEdit() {
     Private_RestoreNoItemBlocks(Edit.RemovedNoItemBlocks);
     Succeeded = !G_LastRollbackFailed;
     if (!Succeeded) {
-      Private_ApplyItemChanges(Edit.RemovedBlocks, Edit.AddedBlocks);
+      declare RolledBack = Private_ApplyItemChanges(Edit.RemovedBlocks, Edit.AddedBlocks);
+      if (RolledBack && Edit.AddedNoItemBlocks.count > 0) {
+        G_LastRollbackFailed = False;
+        Private_RestoreNoItemBlocks(Edit.AddedNoItemBlocks);
+        RolledBack = !G_LastRollbackFailed;
+      }
+      if (!RolledBack) {
+        G_LastRollbackFailed = True;
+      }
     } else {
       Private_SnapshotItems();
     }
@@ -751,6 +790,14 @@ Boolean RedoAtlasEdit() {
   G_NoItemBlockName = Edit.NoItemBlockName;
   G_ReplayingHistory = True;
   declare Succeeded = Private_ApplyItemChanges(Edit.RemovedBlocks, Edit.AddedBlocks);
+  if (Succeeded && Edit.AddedNoItemBlocks.count > 0) {
+    G_LastRollbackFailed = False;
+    Private_RestoreNoItemBlocks(Edit.AddedNoItemBlocks);
+    Succeeded = !G_LastRollbackFailed;
+    if (!Succeeded && !Private_ApplyItemChanges(Edit.AddedBlocks, Edit.RemovedBlocks)) {
+      G_LastRollbackFailed = True;
+    }
+  }
   G_ReplayingHistory = False;
   G_NoItemBlockName = ConfiguredNoItemBlockName;
   if (!Succeeded) {
@@ -914,6 +961,11 @@ Void SetSelectionMode(Integer _NextMode) {
     CustomSelectionRGB = <0.55, 0.30, 0.10>;
   } else {
     ClearSelection();
+    if (_NextMode == C_SelectionMode_RemoveItemGroup) {
+      CustomSelectionRGB = <0.85, 0.20, 0.15>;
+    } else {
+      CustomSelectionRGB = <1.0, 1.0, 1.0>;
+    }
   }
 }
 
@@ -1057,9 +1109,9 @@ Int3[] BuildSelection(Int3 _Start, Int3 _End, Integer _SelectionMode) {
   }
   for (X, MinX, MaxX) {
     for (Z, MinZ, MaxZ) {
-      if (_SelectionMode == C_SelectionMode_Ground2D || _SelectionMode == C_SelectionMode_RemoveWater || _SelectionMode == C_SelectionMode_RestoreWater) {
+      if (_SelectionMode == C_SelectionMode_Ground2D || _SelectionMode == C_SelectionMode_RemoveItemGroup || _SelectionMode == C_SelectionMode_RemoveWater || _SelectionMode == C_SelectionMode_RestoreWater) {
         declare Integer Y;
-        if (_SelectionMode == C_SelectionMode_Ground2D) {
+        if (_SelectionMode == C_SelectionMode_Ground2D || _SelectionMode == C_SelectionMode_RemoveItemGroup) {
           Y = GetFakeGroundHeight(X, Z);
         } else {
           Y = CollectionGroundY;
@@ -1280,7 +1332,7 @@ Void Update() {
     return;
   }
   declare CursorCoord = Cursor.Coord;
-  if (G_Mode == C_SelectionMode_Ground2D || G_Mode == C_SelectionMode_RemoveWater || G_Mode == C_SelectionMode_RestoreWater) {
+  if (G_Mode == C_SelectionMode_Ground2D || G_Mode == C_SelectionMode_RemoveItemGroup || G_Mode == C_SelectionMode_RemoveWater || G_Mode == C_SelectionMode_RestoreWater) {
     CursorCoord = GetMouseCoordOnGround();
     if (G_Mode == C_SelectionMode_RestoreWater) {
       CursorCoord = <CursorCoord.X, CollectionGroundY, CursorCoord.Z>;
@@ -2120,6 +2172,156 @@ Placement[] ResolveFreeform1x1(Int3[] _Selection, Text _Family) {
 
 Boolean PlaceFreeform1x1(Int3[] _Selection, Text _Family) {
   return ExecutePlacementPlan(ResolveFreeform1x1(_Selection, _Family));
+}
+
+Boolean RemoveFreeform1x1(Int3[] _Selection, Text _Family) {
+  if (_Selection.count == 0) {
+    return False;
+  }
+  declare Boolean[Int3] Selected;
+  foreach (Coord in _Selection) {
+    if (!Private_WithinMap(Coord)) {
+      return False;
+    }
+    Selected[Coord] = True;
+  }
+  declare Before = Private_CopyItemBlocks(GetItemBlockList());
+  declare ItemBlock[] ToRemove;
+  declare Boolean[Int3] RemovedCoords;
+  foreach (Block in Before) {
+    if (!Selected.existskey(Block.MacroblockCoord) || Block.Family != _Family) {
+      continue;
+    }
+    if (!Block.Ground || Block.Width != 1 || Block.Depth != 1) {
+      return False;
+    }
+    ToRemove.add(Block);
+    RemovedCoords[Block.MacroblockCoord] = True;
+  }
+  if (ToRemove.count == 0) {
+    return False;
+  }
+  declare MinX = ToRemove[0].MacroblockCoord.X;
+  declare MaxX = MinX;
+  declare MinZ = ToRemove[0].MacroblockCoord.Z;
+  declare MaxZ = MinZ;
+  foreach (Block in ToRemove) {
+    MinX = MathLib::Min(MinX, Block.MacroblockCoord.X);
+    MaxX = MathLib::Max(MaxX, Block.MacroblockCoord.X);
+    MinZ = MathLib::Min(MinZ, Block.MacroblockCoord.Z);
+    MaxZ = MathLib::Max(MaxZ, Block.MacroblockCoord.Z);
+  }
+  declare Boolean[Int3] Occupied;
+  declare ItemBlock[] Neighbors;
+  foreach (Block in Before) {
+    if (Block.Family != _Family || !Block.Ground || Block.Width != 1 || Block.Depth != 1 || RemovedCoords.existskey(Block.MacroblockCoord)) {
+      continue;
+    }
+    declare Coord = Block.MacroblockCoord;
+    if (Coord.X < MinX - 2 || Coord.X > MaxX + 2 || Coord.Z < MinZ - 2 || Coord.Z > MaxZ + 2) {
+      continue;
+    }
+    Occupied[Coord] = True;
+    declare TouchesRemoval = False;
+    for (Dx, -1, 1) {
+      for (Dz, -1, 1) {
+        if (RemovedCoords.existskey(<Coord.X + Dx, Coord.Y, Coord.Z + Dz>)) {
+          TouchesRemoval = True;
+        }
+      }
+    }
+    if (TouchesRemoval) {
+      Neighbors.add(Block);
+    }
+  }
+  declare HasFiller = Private_VariantFor(_Family, 14, True, ToRemove[0].MacroblockCoord).MacroblockName != "";
+  declare Placement[] Plan;
+  foreach (Block in Neighbors) {
+    declare Coord = Block.MacroblockCoord;
+    declare Desired = Private_ResolveFreeformMasks(Private_FreeformOccupiedSides(Occupied, Coord), Private_FreeformOccupiedDiagonals(Occupied, Coord), HasFiller);
+    if (Block.PieceIndex == Desired.Piece && Private_LogicalFreeformDirectionFor(Block) == Desired.Direction) {
+      continue;
+    }
+    declare Variant = Private_VariantFor(_Family, Desired.Piece, True, Coord);
+    if (Variant.MacroblockName == "") {
+      return False;
+    }
+    Plan.add(Placement { Coord = Coord, MacroblockName = Variant.MacroblockName, Direction = Private_OffsetDirection(Desired.Direction, Variant.DirectionOffset + Private_FreeformModelDirectionOffset(Desired.Piece)), Ground = True, Family = _Family, PieceIndex = Desired.Piece, Width = 1, Depth = 1 });
+  }
+  declare CMacroblockModel BaseMacroblock;
+  if (G_NoItemBlockName == "") {
+    BaseMacroblock = Null;
+  } else {
+    BaseMacroblock = GetMacroblockModelFromFilePath(G_NoItemBlockName);
+  }
+  declare CBlockModel BaseBlock;
+  if (G_NoItemBlockName == "" || BaseMacroblock != Null) {
+    BaseBlock = Null;
+  } else {
+    BaseBlock = GetBlockModelFromName(G_NoItemBlockName);
+  }
+  if (G_NoItemBlockName != "" && BaseMacroblock == Null && BaseBlock == Null) {
+    log("No item block '" ^ G_NoItemBlockName ^ "' was not found.");
+    return False;
+  }
+  declare WasReplaying = G_ReplayingHistory;
+  G_ReplayingHistory = True;
+  declare Applied = Private_ApplyResolvedChangesCore(ToRemove, Plan, GetRemovedWater(), False);
+  G_ReplayingHistory = WasReplaying;
+  if (!Applied) {
+    if (G_LastRollbackFailed) {
+      ClearAtlasEditHistory();
+    }
+    return False;
+  }
+  declare After = Private_CopyItemBlocks(GetItemBlockList());
+  declare NoItemReplacement[] AddedBases;
+  declare Boolean[Int3] CoveredColumns;
+  foreach (Block in After) {
+    if (Block.Ground) {
+      for (X, Block.MacroblockCoord.X, Block.MacroblockCoord.X + MathLib::Max(1, Block.Width) - 1) {
+        for (Z, Block.MacroblockCoord.Z, Block.MacroblockCoord.Z + MathLib::Max(1, Block.Depth) - 1) {
+          CoveredColumns[<X, 0, Z>] = True;
+        }
+      }
+    }
+  }
+  declare BaseSucceeded = True;
+  declare Boolean[Int3] BaseColumns;
+  foreach (Block in ToRemove) {
+    declare Coord = Block.MacroblockCoord;
+    declare Column = <Coord.X, 0, Coord.Z>;
+    if (BaseColumns.existskey(Column)) {
+      continue;
+    }
+    BaseColumns[Column] = True;
+    if (CoveredColumns.existskey(Column) || G_NoItemBlockName == "") {
+      continue;
+    }
+    declare BaseCoord = <Coord.X, CollectionGroundY, Coord.Z>;
+    declare Boolean Placed;
+    if (BaseMacroblock != Null) {
+      Placed = PlaceMacroblock_NoDestruction(BaseMacroblock, BaseCoord, CMapEditorPlugin::CardinalDirections::North);
+    } else {
+      Placed = PlaceBlock(BaseBlock, BaseCoord, CMapEditorPlugin::CardinalDirections::North);
+    }
+    if (!Placed && Coord.Y != CollectionGroundY) {
+      BaseCoord = Coord;
+      if (BaseMacroblock != Null) {
+        Placed = PlaceMacroblock_NoDestruction(BaseMacroblock, BaseCoord, CMapEditorPlugin::CardinalDirections::North);
+      } else {
+        Placed = PlaceBlock(BaseBlock, BaseCoord, CMapEditorPlugin::CardinalDirections::North);
+      }
+    }
+    if (Placed) {
+      AddedBases.add(NoItemReplacement { Coord = BaseCoord, Direction = CMapEditorPlugin::CardinalDirections::North });
+    } else {
+      log("Could not restore no-item block '" ^ G_NoItemBlockName ^ "' at " ^ Coord ^ ".");
+      BaseSucceeded = False;
+    }
+  }
+  Private_PushItemEditWithBase(Private_ItemBlockDifference(Before, After), Private_ItemBlockDifference(After, Before), [], AddedBases);
+  return BaseSucceeded;
 }
 
 Placement[] ResolveCube2x2(Int3[] _Selection, Text _Family) {
