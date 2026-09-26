@@ -186,26 +186,40 @@ ItemBlock[] Private_CopyItemBlocks(ItemBlock[] _Blocks) {
   return Copy;
 }
 
-Boolean Private_ContainsItemBlocks(ItemBlock[] _Blocks, ItemBlock[] _Expected) {
-  declare Unmatched = Private_CopyItemBlocks(_Blocks);
-  foreach (Block in _Expected) {
-    declare Index = Private_IndexOfItemBlock(Unmatched, Block);
-    if (Index < 0) {
-      return False;
+ItemBlock[][Int3] Private_GroupItemBlocksByCoord(ItemBlock[] _Blocks) {
+  declare ItemBlock[][Int3] Grouped;
+  foreach (Block in _Blocks) {
+    declare Coord = Block.MacroblockCoord;
+    if (!Grouped.existskey(Coord)) {
+      Grouped[Coord] = [];
     }
-    Unmatched.removekey(Index);
+    declare Bucket = Grouped[Coord];
+    Bucket.add(Block);
+    Grouped[Coord] = Bucket;
   }
-  return True;
+  return Grouped;
 }
 
 Boolean Private_MatchesItemBlockChanges(ItemBlock[] _Blocks, ItemBlock[] _ExpectedPresent, ItemBlock[] _ExpectedAbsent) {
-  if (!Private_ContainsItemBlocks(_Blocks, _ExpectedPresent)) {
-    return False;
-  }
+  declare Unmatched = Private_GroupItemBlocksByCoord(_Blocks);
   foreach (Block in _ExpectedAbsent) {
-    if (Private_IndexOfItemBlock(_Blocks, Block) >= 0) {
+    declare Coord = Block.MacroblockCoord;
+    if (Unmatched.existskey(Coord) && Private_IndexOfItemBlock(Unmatched[Coord], Block) >= 0) {
       return False;
     }
+  }
+  foreach (Block in _ExpectedPresent) {
+    declare Coord = Block.MacroblockCoord;
+    if (!Unmatched.existskey(Coord)) {
+      return False;
+    }
+    declare Bucket = Unmatched[Coord];
+    declare Index = Private_IndexOfItemBlock(Bucket, Block);
+    if (Index < 0) {
+      return False;
+    }
+    Bucket.removekey(Index);
+    Unmatched[Coord] = Bucket;
   }
   return True;
 }
@@ -247,49 +261,6 @@ CMapEditorPlugin::CardinalDirections DirectionFromIndex(Integer _Index) {
   return CMapEditorPlugin::CardinalDirections::North;
 }
 
-Void SetItemBlockList(ItemBlock[] _Blocks) {
-  declare ItemBlock[] Copy;
-  foreach (Block in _Blocks) {
-    Copy.add(Block);
-  }
-  declare metadata ItemBlock[] Atlas_ItemBlocks as Stored for Map;
-  Stored/* not Null here */.clear();
-  foreach (AddRangeItem in Copy) {
-    Stored.add(AddRangeItem);
-  }
-  G_GroundItemHeightsValid = False;
-}
-
-Void Private_SnapshotItems() {
-  if (G_ReplayingHistory) {
-    G_DeferredItemSnapshotUpdates = 2;
-    return;
-  }
-  G_PreviousItems.clear();
-  foreach (Item in Items) {
-    if (Item != Null) {
-      G_PreviousItems.add(Item.Position);
-    }
-  }
-}
-
-Void Private_RestoreRemoved(ItemBlock[] _Removed) {
-  declare metadata ItemBlock[] Atlas_ItemBlocks as StoredBlocks for Map;
-  foreach (Block in _Removed) {
-    declare Model = GetMacroblockModelFromFilePath(Block.MacroblockName);
-    if (Model != Null && PlaceMacroblock_NoDestruction(Model, Block.MacroblockCoord, DirectionFromIndex(Block.MacroblockDir))) {
-      StoredBlocks/* not Null here */.add(Block);
-    } else {
-      G_LastRollbackFailed = True;
-    }
-  }
-  Private_SnapshotItems();
-}
-
-Boolean Private_WithinMap(Int3 _Coord) {
-  return _Coord.X >= 0 && _Coord.Z >= 0 && _Coord.Y >= 0 && _Coord.X < Map.Size.X && _Coord.Z < Map.Size.Z && _Coord.Y < Map.Size.Y;
-}
-
 Void Private_RestoreNoItemBlocks(NoItemReplacement[] _Removed) {
   if (_Removed.count == 0) {
     return;
@@ -316,6 +287,32 @@ Void Private_RestoreNoItemBlocks(NoItemReplacement[] _Removed) {
 ItemBlock[] GetItemBlockList() {
   declare metadata ItemBlock[] Atlas_ItemBlocks as Stored for Map;
   return Stored/* not Null here */;
+}
+
+Void SetItemBlockList(ItemBlock[] _Blocks) {
+  declare ItemBlock[] Copy;
+  foreach (Block in _Blocks) {
+    Copy.add(Block);
+  }
+  declare metadata ItemBlock[] Atlas_ItemBlocks as Stored for Map;
+  Stored/* not Null here */.clear();
+  foreach (AddRangeItem in Copy) {
+    Stored.add(AddRangeItem);
+  }
+  G_GroundItemHeightsValid = False;
+}
+
+Void Private_SnapshotItems() {
+  if (G_ReplayingHistory) {
+    G_DeferredItemSnapshotUpdates = 2;
+    return;
+  }
+  G_PreviousItems.clear();
+  foreach (Item in Items) {
+    if (Item != Null) {
+      G_PreviousItems.add(Item.Position);
+    }
+  }
 }
 
 Void Private_RollbackPlacementPlan(ItemBlock[] _Removed, ItemBlock[] _Placed, NoItemReplacement[] _RemovedNoItemBlocks) {
@@ -352,6 +349,10 @@ Void Private_RollbackPlacementPlan(ItemBlock[] _Removed, ItemBlock[] _Placed, No
     SetItemBlockList(Updated);
   }
   Private_SnapshotItems();
+}
+
+Boolean Private_WithinMap(Int3 _Coord) {
+  return _Coord.X >= 0 && _Coord.Z >= 0 && _Coord.Y >= 0 && _Coord.X < Map.Size.X && _Coord.Z < Map.Size.Z && _Coord.Y < Map.Size.Y;
 }
 
 NoItemRemoval Private_RemoveNoItemBlocks(Int3 _Coord, Integer _Width, Integer _Depth, Boolean _Ground) {
@@ -587,6 +588,19 @@ Boolean ExecutePlacementPlan(Placement[] _Plan) {
   return True;
 }
 
+Void Private_RestoreRemoved(ItemBlock[] _Removed) {
+  declare metadata ItemBlock[] Atlas_ItemBlocks as StoredBlocks for Map;
+  foreach (Block in _Removed) {
+    declare Model = GetMacroblockModelFromFilePath(Block.MacroblockName);
+    if (Model != Null && PlaceMacroblock_NoDestruction(Model, Block.MacroblockCoord, DirectionFromIndex(Block.MacroblockDir))) {
+      StoredBlocks/* not Null here */.add(Block);
+    } else {
+      G_LastRollbackFailed = True;
+    }
+  }
+  Private_SnapshotItems();
+}
+
 Void SetRemovedWater(Int3[] _Coords) {
   if (!G_ReplayingHistory) {
     ClearAtlasEditHistory();
@@ -607,25 +621,45 @@ Boolean Private_ApplyResolvedChangesCore(ItemBlock[] _ToRemove, Placement[] _ToP
   G_LastRollbackFailed = False;
   declare ItemBlock[] Removed;
   declare metadata ItemBlock[] Atlas_ItemBlocks as StoredBlocks for Map;
-  declare Remaining = Private_CopyItemBlocks(StoredBlocks/* not Null here */);
-  foreach (Block in _ToRemove) {
-    declare Index = Private_IndexOfItemBlock(Remaining, Block);
-    if (Index < 0) {
-      if (Removed.count > 0) {
-        SetItemBlockList(Remaining);
-      }
-      Private_RestoreRemoved(Removed);
-      return False;
+  declare Existing = StoredBlocks/* not Null here */;
+  declare Unmatched = Private_GroupItemBlocksByCoord(_ToRemove);
+  declare Boolean[Integer] RemovedIndices;
+  declare MatchedCount = 0;
+  for (Index, 0, Existing.count - 1) {
+    declare Block = Existing[Index];
+    declare Coord = Block.MacroblockCoord;
+    if (!Unmatched.existskey(Coord)) {
+      continue;
     }
+    declare Bucket = Unmatched[Coord];
+    declare TargetIndex = Private_IndexOfItemBlock(Bucket, Block);
+    if (TargetIndex < 0) {
+      continue;
+    }
+    RemovedIndices[Index] = True;
+    Bucket.removekey(TargetIndex);
+    Unmatched[Coord] = Bucket;
+    MatchedCount += 1;
+  }
+  if (MatchedCount != _ToRemove.count) {
+    return False;
+  }
+  declare ItemBlock[] Remaining;
+  for (Index, 0, Existing.count - 1) {
+    if (!RemovedIndices.existskey(Index)) {
+      Remaining.add(Existing[Index]);
+    }
+  }
+  for (Index, 0, Existing.count - 1) {
+    if (!RemovedIndices.existskey(Index)) {
+      continue;
+    }
+    declare Block = Existing[Index];
     declare Model = GetMacroblockModelFromFilePath(Block.MacroblockName);
     if (Model == Null || !RemoveMacroblock(Model, Block.MacroblockCoord, DirectionFromIndex(Block.MacroblockDir))) {
-      if (Removed.count > 0) {
-        SetItemBlockList(Remaining);
-      }
-      Private_RestoreRemoved(Removed);
+      Private_RollbackPlacementPlan(Removed, [], []);
       return False;
     }
-    Remaining.removekey(Index);
     Removed.add(Block);
   }
   if (Removed.count > 0) {

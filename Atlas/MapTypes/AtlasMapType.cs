@@ -109,7 +109,7 @@ public class AtlasMapType : CMapType, IContext
         atlas.Initialize();
         atlas.SetSelectionChangeEventsEnabled(false);
         atlas.SetSelectionMode(AtlasEngine.SelectionMode.Ground2D);
-        atlas.SetFreeformPlacementMode(AtlasEngine.FreeformPlacementMode.ConnectExisting);
+        atlas.SetFreeformPlacementMode(AtlasEngine.FreeformPlacementMode.SelectionOnly);
         ManialinkText = """
             <manialink version="3">
               <frame pos="91 76">

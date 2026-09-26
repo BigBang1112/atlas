@@ -233,24 +233,40 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         return copy;
     }
 
-    private static bool ContainsItemBlocks(IList<ItemBlock> blocks, IList<ItemBlock> expected)
+    private static Dictionary<Int3, List<ItemBlock>> GroupItemBlocksByCoord(IList<ItemBlock> blocks)
     {
-        var unmatched = CopyItemBlocks(blocks);
-        foreach (var block in expected)
+        var grouped = new Dictionary<Int3, List<ItemBlock>>();
+        foreach (var block in blocks)
         {
-            var index = IndexOfItemBlock(unmatched, block);
-            if (index < 0) return false;
-            unmatched.RemoveAt(index);
+            var coord = block.MacroblockCoord;
+            if (!grouped.ContainsKey(coord)) grouped[coord] = new List<ItemBlock>();
+            var bucket = grouped[coord];
+            bucket.Add(block);
+            grouped[coord] = bucket;
         }
-        return true;
+        return grouped;
     }
 
     private static bool MatchesItemBlockChanges(IList<ItemBlock> blocks,
         IList<ItemBlock> expectedPresent, IList<ItemBlock> expectedAbsent)
     {
-        if (!ContainsItemBlocks(blocks, expectedPresent)) return false;
+        var unmatched = GroupItemBlocksByCoord(blocks);
         foreach (var block in expectedAbsent)
-            if (IndexOfItemBlock(blocks, block) >= 0) return false;
+        {
+            var coord = block.MacroblockCoord;
+            if (unmatched.ContainsKey(coord) && IndexOfItemBlock(unmatched[coord], block) >= 0)
+                return false;
+        }
+        foreach (var block in expectedPresent)
+        {
+            var coord = block.MacroblockCoord;
+            if (!unmatched.ContainsKey(coord)) return false;
+            var bucket = unmatched[coord];
+            var index = IndexOfItemBlock(bucket, block);
+            if (index < 0) return false;
+            bucket.RemoveAt(index);
+            unmatched[coord] = bucket;
+        }
         return true;
     }
 
@@ -1527,24 +1543,38 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         lastRollbackFailed = false;
         var removed = new List<ItemBlock>();
         Metadata<List<ItemBlock>>.For(Map, out var storedBlocks, name: "Atlas_ItemBlocks");
-        var remaining = CopyItemBlocks(storedBlocks.Value!);
-        foreach (var block in toRemove)
+        var existing = storedBlocks.Value!;
+        var unmatched = GroupItemBlocksByCoord(toRemove);
+        var removedIndices = new Dictionary<int, bool>();
+        var matchedCount = 0;
+        for (var index = 0; index < existing.Count; index++)
         {
-            var index = IndexOfItemBlock(remaining, block);
-            if (index < 0)
-            {
-                if (removed.Count > 0) SetItemBlockList(remaining);
-                RestoreRemoved(removed);
-                return false;
-            }
+            var block = existing[index];
+            var coord = block.MacroblockCoord;
+            if (!unmatched.ContainsKey(coord)) continue;
+            var bucket = unmatched[coord];
+            var targetIndex = IndexOfItemBlock(bucket, block);
+            if (targetIndex < 0) continue;
+            removedIndices[index] = true;
+            bucket.RemoveAt(targetIndex);
+            unmatched[coord] = bucket;
+            matchedCount++;
+        }
+        if (matchedCount != toRemove.Count) return false;
+
+        var remaining = new List<ItemBlock>();
+        for (var index = 0; index < existing.Count; index++)
+            if (!removedIndices.ContainsKey(index)) remaining.Add(existing[index]);
+        for (var index = 0; index < existing.Count; index++)
+        {
+            if (!removedIndices.ContainsKey(index)) continue;
+            var block = existing[index];
             var model = GetMacroblockModelFromFilePath(block.MacroblockName);
             if (model == null || !RemoveMacroblock(model, block.MacroblockCoord, DirectionFromIndex(block.MacroblockDir)))
             {
-                if (removed.Count > 0) SetItemBlockList(remaining);
-                RestoreRemoved(removed);
+                RollbackPlacementPlan(removed, new List<ItemBlock>(), new List<NoItemReplacement>());
                 return false;
             }
-            remaining.RemoveAt(index);
             removed.Add(block);
         }
         if (removed.Count > 0) SetItemBlockList(remaining);

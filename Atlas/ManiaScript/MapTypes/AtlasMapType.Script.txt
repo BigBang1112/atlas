@@ -13,7 +13,7 @@ Atlas::SetRestoreWaterBlockMapping(["LagoonGrassVoid", "LagoonBeachVoid"], "Lago
 Atlas::Initialize();
 Atlas::SetSelectionChangeEventsEnabled(False);
 Atlas::SetSelectionMode(Atlas::C_SelectionMode_Ground2D);
-Atlas::SetFreeformPlacementMode(Atlas::C_FreeformPlacementMode_ConnectExisting);
+Atlas::SetFreeformPlacementMode(Atlas::C_FreeformPlacementMode_SelectionOnly);
 ManialinkText = """<manialink version="3">
   <frame pos="91 76">
                     <quad pos="0 0" z-index="0" size="65 85" bgcolor="1112" />
