@@ -1192,6 +1192,15 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         return first;
     }
 
+    private static int ExceptMask(int mask, int excluded)
+    {
+        if (HasSide(mask, 1) && HasSide(excluded, 1)) mask -= 1;
+        if (HasSide(mask, 2) && HasSide(excluded, 2)) mask -= 2;
+        if (HasSide(mask, 4) && HasSide(excluded, 4)) mask -= 4;
+        if (HasSide(mask, 8) && HasSide(excluded, 8)) mask -= 8;
+        return mask;
+    }
+
     private static int RotateMask(int mask, int turns)
     {
         for (var turn = 0; turn < turns; turn++)
@@ -1812,6 +1821,74 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         return mask;
     }
 
+    private static int FreeformConnectedSides(Dictionary<Int3, int> sideMasks,
+        Int3 coord, int ownMask)
+    {
+        var mask = 0;
+        var north = new Int3(coord.X, coord.Y, coord.Z - 1);
+        var east = new Int3(coord.X + 1, coord.Y, coord.Z);
+        var south = new Int3(coord.X, coord.Y, coord.Z + 1);
+        var west = new Int3(coord.X - 1, coord.Y, coord.Z);
+        if (HasSide(ownMask, 1) && sideMasks.ContainsKey(north) && HasSide(sideMasks[north], 4)) mask += 1;
+        if (HasSide(ownMask, 2) && sideMasks.ContainsKey(east) && HasSide(sideMasks[east], 8)) mask += 2;
+        if (HasSide(ownMask, 4) && sideMasks.ContainsKey(south) && HasSide(sideMasks[south], 1)) mask += 4;
+        if (HasSide(ownMask, 8) && sideMasks.ContainsKey(west) && HasSide(sideMasks[west], 2)) mask += 8;
+        return mask;
+    }
+
+    private static int FreeformConnectedDiagonals(Dictionary<Int3, int> diagonalMasks,
+        Dictionary<Int3, bool> removed, Int3 coord, int oldMask)
+    {
+        var mask = 0;
+        var northWest = new Int3(coord.X - 1, coord.Y, coord.Z - 1);
+        var northEast = new Int3(coord.X + 1, coord.Y, coord.Z - 1);
+        var southEast = new Int3(coord.X + 1, coord.Y, coord.Z + 1);
+        var southWest = new Int3(coord.X - 1, coord.Y, coord.Z + 1);
+        if (!removed.ContainsKey(northWest))
+        {
+            if (diagonalMasks.ContainsKey(northWest))
+            {
+                if (HasSide(diagonalMasks[northWest], 4)) mask += 1;
+            }
+            else if (HasSide(oldMask, 1)) mask += 1;
+        }
+        if (!removed.ContainsKey(northEast))
+        {
+            if (diagonalMasks.ContainsKey(northEast))
+            {
+                if (HasSide(diagonalMasks[northEast], 8)) mask += 2;
+            }
+            else if (HasSide(oldMask, 2)) mask += 2;
+        }
+        if (!removed.ContainsKey(southEast))
+        {
+            if (diagonalMasks.ContainsKey(southEast))
+            {
+                if (HasSide(diagonalMasks[southEast], 1)) mask += 4;
+            }
+            else if (HasSide(oldMask, 4)) mask += 4;
+        }
+        if (!removed.ContainsKey(southWest))
+        {
+            if (diagonalMasks.ContainsKey(southWest))
+            {
+                if (HasSide(diagonalMasks[southWest], 2)) mask += 8;
+            }
+            else if (HasSide(oldMask, 8)) mask += 8;
+        }
+        return mask;
+    }
+
+    private static int FreeformSupportedDiagonals(int sides)
+    {
+        var mask = 0;
+        if (HasSide(sides, 1) && HasSide(sides, 8)) mask += 1;
+        if (HasSide(sides, 1) && HasSide(sides, 2)) mask += 2;
+        if (HasSide(sides, 2) && HasSide(sides, 4)) mask += 4;
+        if (HasSide(sides, 4) && HasSide(sides, 8)) mask += 8;
+        return mask;
+    }
+
     private static FreeformCandidate ResolveFreeformMasks(int mask, int diagonals, bool hasFiller)
     {
         var missingDiagonals = 15 - diagonals;
@@ -1895,6 +1972,21 @@ public class AtlasEngine : CMapEditorPlugin, ILib
             var edgeDirection = RoadDirectionForMask(sides);
             diagonals = UnionMask(diagonals, RotateMask(3, DirectionToIndex(edgeDirection)));
         }
+        return ResolveFreeformMasks(sides, diagonals, hasFiller);
+    }
+
+    internal static FreeformCandidate ResolveFreeformRemovalCell(Dictionary<Int3, int> sideMasks,
+        Dictionary<Int3, int> diagonalMasks, Dictionary<Int3, bool> removed, Int3 coord, int oldPiece,
+        CardinalDirections oldDirection, bool hasFiller)
+    {
+        // Side connections must match both surviving pieces. A filled corner can
+        // remain encoded in the old piece without a separate diagonal item. If a
+        // diagonal item exists, its facing corner determines whether they join.
+        var sides = FreeformConnectedSides(sideMasks, coord,
+            FreeformSideMask(oldPiece, oldDirection));
+        var diagonals = FreeformConnectedDiagonals(diagonalMasks, removed, coord,
+            FreeformDiagonalMask(oldPiece, oldDirection));
+        diagonals = ExceptMask(diagonals, 15 - FreeformSupportedDiagonals(sides));
         return ResolveFreeformMasks(sides, diagonals, hasFiller);
     }
 
@@ -2042,7 +2134,8 @@ public class AtlasEngine : CMapEditorPlugin, ILib
             minZ = Math.Min(minZ, block.MacroblockCoord.Z);
             maxZ = Math.Max(maxZ, block.MacroblockCoord.Z);
         }
-        var occupied = new Dictionary<Int3, bool>();
+        var sideMasks = new Dictionary<Int3, int>();
+        var diagonalMasks = new Dictionary<Int3, int>();
         var neighbors = new List<ItemBlock>();
         foreach (var block in before)
         {
@@ -2051,7 +2144,9 @@ public class AtlasEngine : CMapEditorPlugin, ILib
             var coord = block.MacroblockCoord;
             if (coord.X < minX - 2 || coord.X > maxX + 2 ||
                 coord.Z < minZ - 2 || coord.Z > maxZ + 2) continue;
-            occupied[coord] = true;
+            var logicalDirection = LogicalFreeformDirectionFor(block);
+            sideMasks[coord] = FreeformSideMask(block.PieceIndex, logicalDirection);
+            diagonalMasks[coord] = FreeformDiagonalMask(block.PieceIndex, logicalDirection);
             var touchesRemoval = false;
             for (var dx = -1; dx <= 1; dx++)
             for (var dz = -1; dz <= 1; dz++)
@@ -2064,8 +2159,8 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         foreach (var block in neighbors)
         {
             var coord = block.MacroblockCoord;
-            var desired = ResolveFreeformMasks(FreeformOccupiedSides(occupied, coord),
-                FreeformOccupiedDiagonals(occupied, coord), hasFiller);
+            var desired = ResolveFreeformRemovalCell(sideMasks, diagonalMasks, removedCoords, coord,
+                block.PieceIndex, LogicalFreeformDirectionFor(block), hasFiller);
             if (block.PieceIndex == desired.Piece &&
                 LogicalFreeformDirectionFor(block) == desired.Direction) continue;
             var variant = VariantFor(family, desired.Piece, true, coord);

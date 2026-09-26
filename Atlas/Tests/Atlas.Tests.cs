@@ -92,6 +92,74 @@ public static class AtlasTests
         Check(AtlasEngine.ResolveFreeformCell(connectedEndpoint, selectedNeighbor, edge, 4,
             CMapEditorPlugin.CardinalDirections.North, false).Piece == 4,
             "an existing base is not downgraded when a neighbor is added");
+        var removalCenter = new Int3(5, 1, 5);
+        var remainingSideMasks = new Dictionary<Int3, int>
+        {
+            [new Int3(5, 1, 4)] = 15,
+            [new Int3(6, 1, 5)] = 15,
+            [new Int3(4, 1, 5)] = 15
+        };
+        var noDiagonalMasks = new Dictionary<Int3, int>();
+        var removedCorner = new Dictionary<Int3, bool> { [new Int3(6, 1, 4)] = true };
+        var exposedCorner = AtlasEngine.ResolveFreeformRemovalCell(remainingSideMasks,
+            noDiagonalMasks, removedCorner, removalCenter, 5,
+            CMapEditorPlugin.CardinalDirections.North, false);
+        Check(exposedCorner.Piece == 7 && exposedCorner.Direction == CMapEditorPlugin.CardinalDirections.North,
+            "removing a diagonal keeps an existing piece's other filled corner");
+        var removedNorthWest = new Dictionary<Int3, bool> { [new Int3(4, 1, 4)] = true };
+        var surroundingSideMasks = new Dictionary<Int3, int>(remainingSideMasks)
+        {
+            [new Int3(5, 1, 6)] = 15
+        };
+        var exposedBase = AtlasEngine.ResolveFreeformRemovalCell(surroundingSideMasks,
+            noDiagonalMasks, removedNorthWest, removalCenter, 14,
+            CMapEditorPlugin.CardinalDirections.North, true);
+        Check(exposedBase.Piece == 0 && exposedBase.Direction == CMapEditorPlugin.CardinalDirections.North,
+            "removing one diagonal from a filler exposes only that corner");
+        var sparseSideMasks = new Dictionary<Int3, int>
+        {
+            [new Int3(6, 1, 5)] = 15,
+            [new Int3(5, 1, 6)] = 15
+        };
+        var formerBase3 = AtlasEngine.ResolveFreeformRemovalCell(sparseSideMasks,
+            noDiagonalMasks, removedNorthWest, removalCenter, 1,
+            CMapEditorPlugin.CardinalDirections.North, false);
+        Check(formerBase3.Piece == 9 && formerBase3.Direction == CMapEditorPlugin.CardinalDirections.East,
+            "Base3 loses unsupported sides after removal");
+        var loneEastSideMask = new Dictionary<Int3, int> { [new Int3(6, 1, 5)] = 15 };
+        var formerDeadend4 = AtlasEngine.ResolveFreeformRemovalCell(loneEastSideMask,
+            noDiagonalMasks, removedNorthWest, removalCenter, 6,
+            CMapEditorPlugin.CardinalDirections.North, false);
+        Check(formerDeadend4.Piece == 12 &&
+            formerDeadend4.Direction == CMapEditorPlugin.CardinalDirections.East,
+            "Deadend4 loses unsupported sides after removal");
+        var unconnectedSouth = new Dictionary<Int3, int>(surroundingSideMasks)
+        {
+            [new Int3(5, 1, 6)] = 2
+        };
+        var base3AtEdge = AtlasEngine.ResolveFreeformRemovalCell(unconnectedSouth,
+            noDiagonalMasks, removedNorthWest, removalCenter, 1,
+            CMapEditorPlugin.CardinalDirections.West, false);
+        Check(base3AtEdge.Piece == 6 &&
+            base3AtEdge.Direction == CMapEditorPlugin.CardinalDirections.North,
+            "Base3 becomes Deadend4 when a surviving neighbor does not connect back");
+        var unsupportedSouthEast = new Dictionary<Int3, int>
+        {
+            [new Int3(6, 1, 6)] = 14 // Its north-west corner is open.
+        };
+        var base1AtCorner = AtlasEngine.ResolveFreeformRemovalCell(surroundingSideMasks,
+            unsupportedSouthEast, removedNorthWest, removalCenter, 0,
+            CMapEditorPlugin.CardinalDirections.North, false);
+        Check(base1AtCorner.Piece == 2 &&
+            base1AtCorner.Direction == CMapEditorPlugin.CardinalDirections.North,
+            "Base1 becomes Base5 when a diagonal neighbor has an open facing corner");
+        var removedSouthEast = new Dictionary<Int3, bool> { [new Int3(6, 1, 6)] = true };
+        var base1AfterCornerRemoval = AtlasEngine.ResolveFreeformRemovalCell(surroundingSideMasks,
+            noDiagonalMasks, removedSouthEast, removalCenter, 0,
+            CMapEditorPlugin.CardinalDirections.North, false);
+        Check(base1AfterCornerRemoval.Piece == 2 &&
+            base1AfterCornerRemoval.Direction == CMapEditorPlugin.CardinalDirections.North,
+            "removing the opposite diagonal from Base1 selects Base5");
         var base7 = AtlasEngine.ResolveFreeformOverlap(10, CMapEditorPlugin.CardinalDirections.South, 9,
             CMapEditorPlugin.CardinalDirections.North);
         var reversedBase7 = AtlasEngine.ResolveFreeformOverlap(9, CMapEditorPlugin.CardinalDirections.North, 10,

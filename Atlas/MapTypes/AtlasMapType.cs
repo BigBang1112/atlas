@@ -143,7 +143,7 @@ public class AtlasMapType : CMapType, IContext
                 <label id="AtlasRedo" pos="35 -57" z-index="2" size="26 6" text="Redo item" textsize="2" textcolor="fff" scriptevents="1" />
 
                 <quad pos="3 -66" z-index="1" size="59 8" bgcolor="2860" />
-                <label id="AtlasConnections" pos="4 -67" z-index="2" size="57 6" text="Connections: Existing" textsize="2" textcolor="fff" scriptevents="1" />
+                <label id="AtlasConnections" pos="4 -67" z-index="2" size="57 6" text="Connections: Selection only" textsize="2" textcolor="fff" scriptevents="1" />
 
                 <label id="AtlasStatus" pos="3 -78" z-index="2" size="59 5" text="Mode: Ground docks" textsize="1" textcolor="ccc" />
               </frame>
@@ -151,7 +151,7 @@ public class AtlasMapType : CMapType, IContext
                 main() {
                   declare Status <=> (Page.GetFirstChild("AtlasStatus") as CMlLabel);
                                     declare Connections <=> (Page.GetFirstChild("AtlasConnections") as CMlLabel);
-                                    declare Boolean ConnectExisting = True;
+                                    declare Boolean ConnectExisting = False;
                   declare Boolean WasPointerOverPanel = False;
                   while (True) {
                     yield;
