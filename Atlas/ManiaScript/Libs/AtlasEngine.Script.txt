@@ -34,7 +34,16 @@
   Integer Depth;
 }
 
+#Struct ItemBlockSubvariant {
+  Text MacroblockName;
+}
+
 #Struct ItemBlockVariant {
+  ItemBlockSubvariant[] Subvariants;
+  Integer DirectionOffset;
+}
+
+#Struct SelectedItemBlockVariant {
   Text MacroblockName;
   Integer DirectionOffset;
 }
@@ -74,7 +83,7 @@ declare Vec3[] G_PreviousItems;
 declare Text[Text] G_RemoveWaterMapping;
 declare Text[] G_RestoreWaterVoidNames;
 declare Text G_WaterVoidName;
-declare ItemBlockVariant[][][][Text] G_ItemBlockGroups;
+declare ItemBlockVariant[][][Text] G_ItemBlockGroups;
 declare Integer[Integer][Text] G_CubePieceMapping;
 declare Integer[Int3] G_GroundItemHeights;
 declare Boolean G_GroundItemHeightsValid;
@@ -197,11 +206,11 @@ Void SetRemovedWater(Int3[] _Coords) {
   }
 }
 
-Void SetItemBlockGroup(Text _Family, ItemBlockVariant[][][] _Variants) {
+Void SetItemBlockGroup(Text _Family, ItemBlockVariant[][] _Variants) {
   G_ItemBlockGroups[_Family] = _Variants;
 }
 
-Void SetLayeredItemBlockGroup(Text _Family, ItemBlockVariant[][][] _Bottom, ItemBlockVariant[][][] _Middle, ItemBlockVariant[][][] _Top) {
+Void SetLayeredItemBlockGroup(Text _Family, ItemBlockVariant[][] _Bottom, ItemBlockVariant[][] _Middle, ItemBlockVariant[][] _Top) {
   SetItemBlockGroup(_Family ^ "#bottom", _Bottom);
   SetItemBlockGroup(_Family ^ "#middle", _Middle);
   SetItemBlockGroup(_Family ^ "#top", _Top);
@@ -895,9 +904,9 @@ Integer Private_MaskForRoadPiece(Integer _Piece, CMapEditorPlugin::CardinalDirec
   return Private_RotateMask(Mask, DirectionToIndex(_Direction));
 }
 
-ItemBlockVariant Private_VariantFor(Text _Family, Integer _Piece, Boolean _Ground, Int3 _Coord) {
+SelectedItemBlockVariant Private_VariantFor(Text _Family, Integer _Piece, Boolean _Ground, Int3 _Coord) {
   if (!G_ItemBlockGroups.existskey(_Family)) {
-    return ItemBlockVariant { MacroblockName = "" };
+    return SelectedItemBlockVariant { MacroblockName = "" };
   }
   declare Layers = G_ItemBlockGroups[_Family];
   declare Layer = 0;
@@ -905,17 +914,17 @@ ItemBlockVariant Private_VariantFor(Text _Family, Integer _Piece, Boolean _Groun
     Layer = 1;
   }
   if (Layer >= Layers.count || _Piece < 0 || _Piece >= Layers[Layer].count) {
-    return ItemBlockVariant { MacroblockName = "" };
+    return SelectedItemBlockVariant { MacroblockName = "" };
   }
-  declare Variants = Layers[Layer][_Piece];
-  if (Variants.count == 0) {
-    return ItemBlockVariant { MacroblockName = "" };
+  declare Variant = Layers[Layer][_Piece];
+  if (Variant.Subvariants.count == 0) {
+    return SelectedItemBlockVariant { MacroblockName = "" };
   }
-  declare Seed = (_Coord.X * 31 + _Coord.Y * 17 + _Coord.Z * 13) % Variants.count;
+  declare Seed = (_Coord.X * 31 + _Coord.Y * 17 + _Coord.Z * 13) % Variant.Subvariants.count;
   if (Seed < 0) {
-    Seed += Variants.count;
+    Seed += Variant.Subvariants.count;
   }
-  return Variants[Seed];
+  return SelectedItemBlockVariant { MacroblockName = Variant.Subvariants[Seed].MacroblockName, DirectionOffset = Variant.DirectionOffset };
 }
 
 Integer Private_DirectionOffsetFor(ItemBlock _Block) {
@@ -930,8 +939,9 @@ Integer Private_DirectionOffsetFor(ItemBlock _Block) {
   if (Layer >= Layers.count || _Block.PieceIndex >= Layers[Layer].count) {
     return 0;
   }
-  foreach (Variant in Layers[Layer][_Block.PieceIndex]) {
-    if (Variant.MacroblockName == _Block.MacroblockName) {
+  declare Variant = Layers[Layer][_Block.PieceIndex];
+  foreach (Subvariant in Variant.Subvariants) {
+    if (Subvariant.MacroblockName == _Block.MacroblockName) {
       return Variant.DirectionOffset;
     }
   }

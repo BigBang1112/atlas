@@ -15,21 +15,82 @@ public class AtlasMapType : CMapType, IContext
         atlas.SetItemBlockGroup("BayDocks", [
             [], // No air variants.
             [
-                [new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "X_BayDocksBase1\\BayDockBase1A.Macroblock.Gbx", DirectionOffset = 3 }, new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "X_BayDocksBase1\\BayDockBase1B.Macroblock.Gbx", DirectionOffset = 3 }, new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "X_BayDocksBase1\\BayDockBase1C.Macroblock.Gbx", DirectionOffset = 3 }, new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "X_BayDocksBase1\\BayDockBase1D.Macroblock.Gbx", DirectionOffset = 3 }],
-                [new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "V_BayDocksBase3\\BayDockBase3A.Macroblock.Gbx" }, new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "V_BayDocksBase3\\BayDockBase3B.Macroblock.Gbx" }, new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "V_BayDocksBase3\\BayDockBase3C.Macroblock.Gbx" }, new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "V_BayDocksBase3\\BayDockBase3D.Macroblock.Gbx" }],
-                [new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "W_BayDocksBase5\\BayDockBase5A.Macroblock.Gbx" }, new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "W_BayDocksBase5\\BayDockBase5B.Macroblock.Gbx" }],
-                [new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "S_BayDocksBase7\\BayDockBase7A.Macroblock.Gbx" }, new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "S_BayDocksBase7\\BayDockBase7B.Macroblock.Gbx" }],
-                [new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "P_BayDocksBase15\\BayDockBase15A.Macroblock.Gbx" }, new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "P_BayDocksBase15\\BayDockBase15B.Macroblock.Gbx" }, new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "P_BayDocksBase15\\BayDockBase15C.Macroblock.Gbx" }, new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "P_BayDocksBase15\\BayDockBase15D.Macroblock.Gbx" }],
-                [new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "Z_BayDocksDeadend\\BayDockDeadendA.Macroblock.Gbx" }, new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "Z_BayDocksDeadend\\BayDockDeadendB.Macroblock.Gbx" }, new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "Z_BayDocksDeadend\\BayDockDeadendC.Macroblock.Gbx" }, new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "Z_BayDocksDeadend\\BayDockDeadendD.Macroblock.Gbx" }],
-                [new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "U_BayDocksDeadend4\\BayDockDeadend4A.Macroblock.Gbx", DirectionOffset = 2 }, new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "U_BayDocksDeadend4\\BayDockDeadend4B.Macroblock.Gbx", DirectionOffset = 2 }],
-                [new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "T_BayDocksDeadend8\\BayDockDeadend8A.Macroblock.Gbx" }, new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "T_BayDocksDeadend8\\BayDockDeadend8B.Macroblock.Gbx" }],
-                [new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "O_BayDocksDeadend12\\BayDockDeadend12A.Macroblock.Gbx" }, new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "O_BayDocksDeadend12\\BayDockDeadend12B.Macroblock.Gbx" }, new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "O_BayDocksDeadend12\\BayDockDeadend12C.Macroblock.Gbx" }, new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "O_BayDocksDeadend12\\BayDockDeadend12D.Macroblock.Gbx" }],
-                [new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "Y_BayDocksCorner\\BayDockCornerA.Macroblock.Gbx" }, new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "Y_BayDocksCorner\\BayDockCornerB.Macroblock.Gbx" }, new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "Y_BayDocksCorner\\BayDockCornerC.Macroblock.Gbx" }, new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "Y_BayDocksCorner\\BayDockCornerD.Macroblock.Gbx" }],
-                [new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "Q_BayDocksCorner8\\BayDockCorner8A.Macroblock.Gbx" }, new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "Q_BayDocksCorner8\\BayDockCorner8B.Macroblock.Gbx" }, new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "Q_BayDocksCorner8\\BayDockCorner8C.Macroblock.Gbx" }, new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "Q_BayDocksCorner8\\BayDockCorner8D.Macroblock.Gbx" }],
-                [new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "R_BayDocksStraight\\BayDockStraightA.Macroblock.Gbx" }, new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "R_BayDocksStraight\\BayDockStraightB.Macroblock.Gbx" }, new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "R_BayDocksStraight\\BayDockStraightC.Macroblock.Gbx" }, new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "R_BayDocksStraight\\BayDockStraightD.Macroblock.Gbx" }],
-                [new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "N_BayDocksTShaped\\BayDockTShapedA.Macroblock.Gbx" }, new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "N_BayDocksTShaped\\BayDockTShapedB.Macroblock.Gbx" }, new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "N_BayDocksTShaped\\BayDockTShapedC.Macroblock.Gbx" }, new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "N_BayDocksTShaped\\BayDockTShapedD.Macroblock.Gbx" }],
-                [new AtlasEngine.ItemBlockVariant { MacroblockName = dock + "M_BayDocksCross\\BayDockCross.Macroblock.Gbx" }],
-                [new AtlasEngine.ItemBlockVariant { MacroblockName = bayBase + "BayHarborBase.Macroblock.Gbx" }] // Optional interior filler.
+                new AtlasEngine.ItemBlockVariant { Subvariants = [
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "X_BayDocksBase1\\BayDockBase1A.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "X_BayDocksBase1\\BayDockBase1B.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "X_BayDocksBase1\\BayDockBase1C.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "X_BayDocksBase1\\BayDockBase1D.Macroblock.Gbx" }
+                ], DirectionOffset = 3 },
+                new AtlasEngine.ItemBlockVariant { Subvariants = [
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "V_BayDocksBase3\\BayDockBase3A.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "V_BayDocksBase3\\BayDockBase3B.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "V_BayDocksBase3\\BayDockBase3C.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "V_BayDocksBase3\\BayDockBase3D.Macroblock.Gbx" }
+                ] },
+                new AtlasEngine.ItemBlockVariant { Subvariants = [
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "W_BayDocksBase5\\BayDockBase5A.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "W_BayDocksBase5\\BayDockBase5B.Macroblock.Gbx" }
+                ] },
+                new AtlasEngine.ItemBlockVariant { Subvariants = [
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "S_BayDocksBase7\\BayDockBase7A.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "S_BayDocksBase7\\BayDockBase7B.Macroblock.Gbx" }
+                ] },
+                new AtlasEngine.ItemBlockVariant { Subvariants = [
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "P_BayDocksBase15\\BayDockBase15A.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "P_BayDocksBase15\\BayDockBase15B.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "P_BayDocksBase15\\BayDockBase15C.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "P_BayDocksBase15\\BayDockBase15D.Macroblock.Gbx" }
+                ] },
+                new AtlasEngine.ItemBlockVariant { Subvariants = [
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "Z_BayDocksDeadend\\BayDockDeadendA.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "Z_BayDocksDeadend\\BayDockDeadendB.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "Z_BayDocksDeadend\\BayDockDeadendC.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "Z_BayDocksDeadend\\BayDockDeadendD.Macroblock.Gbx" }
+                ] },
+                new AtlasEngine.ItemBlockVariant { Subvariants = [
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "U_BayDocksDeadend4\\BayDockDeadend4A.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "U_BayDocksDeadend4\\BayDockDeadend4B.Macroblock.Gbx" }
+                ], DirectionOffset = 2 },
+                new AtlasEngine.ItemBlockVariant { Subvariants = [
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "T_BayDocksDeadend8\\BayDockDeadend8A.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "T_BayDocksDeadend8\\BayDockDeadend8B.Macroblock.Gbx" }
+                ] },
+                new AtlasEngine.ItemBlockVariant { Subvariants = [
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "O_BayDocksDeadend12\\BayDockDeadend12A.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "O_BayDocksDeadend12\\BayDockDeadend12B.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "O_BayDocksDeadend12\\BayDockDeadend12C.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "O_BayDocksDeadend12\\BayDockDeadend12D.Macroblock.Gbx" }
+                ] },
+                new AtlasEngine.ItemBlockVariant { Subvariants = [
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "Y_BayDocksCorner\\BayDockCornerA.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "Y_BayDocksCorner\\BayDockCornerB.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "Y_BayDocksCorner\\BayDockCornerC.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "Y_BayDocksCorner\\BayDockCornerD.Macroblock.Gbx" }
+                ] },
+                new AtlasEngine.ItemBlockVariant { Subvariants = [
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "Q_BayDocksCorner8\\BayDockCorner8A.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "Q_BayDocksCorner8\\BayDockCorner8B.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "Q_BayDocksCorner8\\BayDockCorner8C.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "Q_BayDocksCorner8\\BayDockCorner8D.Macroblock.Gbx" }
+                ] },
+                new AtlasEngine.ItemBlockVariant { Subvariants = [
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "R_BayDocksStraight\\BayDockStraightA.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "R_BayDocksStraight\\BayDockStraightB.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "R_BayDocksStraight\\BayDockStraightC.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "R_BayDocksStraight\\BayDockStraightD.Macroblock.Gbx" }
+                ] },
+                new AtlasEngine.ItemBlockVariant { Subvariants = [
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "N_BayDocksTShaped\\BayDockTShapedA.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "N_BayDocksTShaped\\BayDockTShapedB.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "N_BayDocksTShaped\\BayDockTShapedC.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "N_BayDocksTShaped\\BayDockTShapedD.Macroblock.Gbx" }
+                ] },
+                new AtlasEngine.ItemBlockVariant { Subvariants = [
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "M_BayDocksCross\\BayDockCross.Macroblock.Gbx" }
+                ] },
+                new AtlasEngine.ItemBlockVariant { Subvariants = [
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = bayBase + "BayHarborBase.Macroblock.Gbx" }
+                ] }, // Optional interior filler.
             ]
         ]);
 

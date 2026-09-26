@@ -267,7 +267,7 @@ This is a smaller inconvenience that is needed to ensure the editor doesn't desy
 
 Composing multiple variants of item blocks with a single placement tool requires a grouping mechanism. Such mechanism will be called **item block groups**. They are lists of macroblocks that are ordered in ways that library can successfully compose.
 
-The list is defined as `ItemBlockVariant[][][]`, where the primary list stores up to 2 elements, first air variant list and second ground variant list (picked based on if selection is on ground or in air), second layer stores variant indices that are placed consistently, and each variant can have multiple subvariants which are purely randomized. Each entry contains a macroblock path and a direction offset in clockwise quarter turns. An omitted offset is zero. The selected subvariant's offset is added to the model direction before placement.
+The list is defined as `ItemBlockVariant[][]`, where the primary list stores up to 2 elements, first air variant list and second ground variant list (picked based on if selection is on ground or in air), and the second layer stores piece indices that are placed consistently. Each variant has a direction offset in clockwise quarter turns and a list of subvariants, each with a macroblock path. An omitted offset is zero. A subvariant is selected by coordinate, and its variant's offset is added to the model direction before placement.
 
 Selection system can be used to place such item block groups in various ways (defined below).
 
@@ -325,6 +325,14 @@ model directions for Base1 and Base3 (+2 quarter turns) and Straight and TShaped
 when reading tracked pieces before resolving an overlap. Variant direction offsets
 are applied separately after the core conversion.
 
+`FreeformPlacementMode.SelectionOnly` is the default. It resolves the selected
+rectangle's topology and merges it with tracked 1x1 pieces covered by the selection.
+Neighbors outside it are neither connected nor changed. An overlapping tracked
+footprint larger than 1x1 is rejected because removing it would change cells outside
+the selection. `FreeformPlacementMode.ConnectExisting` retains the connected behavior:
+it includes existing same-family neighbors and updates affected cells beside the
+selection. Call `SetFreeformPlacementMode` to switch between them.
+
 Expected rules:
 1. If only 1 coord is selected and nothing occupies it already, place Cross
 2. If a line is selected with no connections, place TShaped pieces at the start and end mirrored, fill the line with Straight
@@ -341,7 +349,7 @@ Expected rules:
 12. A Base3 needs all four cardinal neighbors. Extending an existing TShaped with a wider rectangle into a three-sided cell yields Deadend; the old line's open diagonals alone must not select Deadend12
 13. Expanding a Corner with another rectangle keeps the topology result; a three-sided cell becomes a Deadend instead of an assumed Base1
 
-When a new rectangle touches or overlaps tracked pieces from the same family, resolve
+In `ConnectExisting` mode, when a new rectangle touches or overlaps tracked pieces from the same family, resolve
 its occupied cells together with the existing footprint. Reevaluate existing cells
 within one cell of the selection, since a new cardinal or diagonal neighbor can
 change a corner, deadend, or base variant. Fully surrounded cells use the optional

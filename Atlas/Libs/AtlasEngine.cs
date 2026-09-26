@@ -56,10 +56,21 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         public int Depth;
     }
 
-    public struct ItemBlockVariant
+    public struct ItemBlockSubvariant
     {
         public string MacroblockName;
+    }
+
+    public struct ItemBlockVariant
+    {
+        public List<ItemBlockSubvariant> Subvariants;
         /// <summary>Clockwise quarter turns added to the resolved piece direction.</summary>
+        public int DirectionOffset;
+    }
+
+    private struct SelectedItemBlockVariant
+    {
+        public string MacroblockName;
         public int DirectionOffset;
     }
 
@@ -89,7 +100,7 @@ public class AtlasEngine : CMapEditorPlugin, ILib
     private readonly Dictionary<string, string> removeWaterMapping = [];
     private readonly List<string> restoreWaterVoidNames = [];
     private string waterVoidName = "";
-    private readonly Dictionary<string, List<List<List<ItemBlockVariant>>>> itemBlockGroups = [];
+    private readonly Dictionary<string, List<List<ItemBlockVariant>>> itemBlockGroups = [];
     private readonly Dictionary<string, Dictionary<int, int>> cubePieceMapping = [];
     private readonly Dictionary<Int3, int> groundItemHeights = [];
     private bool groundItemHeightsValid;
@@ -226,10 +237,10 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         foreach (var coord in copy) stored.Value.Add(coord);
     }
 
-    public void SetItemBlockGroup(string family, List<List<List<ItemBlockVariant>>> variants) => itemBlockGroups[family] = variants;
+    public void SetItemBlockGroup(string family, List<List<ItemBlockVariant>> variants) => itemBlockGroups[family] = variants;
 
-    public void SetLayeredItemBlockGroup(string family, List<List<List<ItemBlockVariant>>> bottom,
-        List<List<List<ItemBlockVariant>>> middle, List<List<List<ItemBlockVariant>>> top)
+    public void SetLayeredItemBlockGroup(string family, List<List<ItemBlockVariant>> bottom,
+        List<List<ItemBlockVariant>> middle, List<List<ItemBlockVariant>> top)
     {
         SetItemBlockGroup(family + "#bottom", bottom);
         SetItemBlockGroup(family + "#middle", middle);
@@ -874,19 +885,21 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         return RotateMask(mask, DirectionToIndex(direction));
     }
 
-    private ItemBlockVariant VariantFor(string family, int piece, bool ground, Int3 coord)
+    private SelectedItemBlockVariant VariantFor(string family, int piece, bool ground, Int3 coord)
     {
-        if (!itemBlockGroups.ContainsKey(family)) return new ItemBlockVariant { MacroblockName = "" };
+        if (!itemBlockGroups.ContainsKey(family)) return new SelectedItemBlockVariant { MacroblockName = "" };
         var layers = itemBlockGroups[family];
         var layer = 0;
         if (ground) layer = 1;
         if (layer >= layers.Count || piece < 0 || piece >= layers[layer].Count)
-            return new ItemBlockVariant { MacroblockName = "" };
-        var variants = layers[layer][piece];
-        if (variants.Count == 0) return new ItemBlockVariant { MacroblockName = "" };
-        var seed = (coord.X * 31 + coord.Y * 17 + coord.Z * 13) % variants.Count;
-        if (seed < 0) seed += variants.Count;
-        return variants[seed];
+            return new SelectedItemBlockVariant { MacroblockName = "" };
+        var variant = layers[layer][piece];
+        if (variant.Subvariants.Count == 0)
+            return new SelectedItemBlockVariant { MacroblockName = "" };
+        var seed = (coord.X * 31 + coord.Y * 17 + coord.Z * 13) % variant.Subvariants.Count;
+        if (seed < 0) seed += variant.Subvariants.Count;
+        return new SelectedItemBlockVariant { MacroblockName = variant.Subvariants[seed].MacroblockName,
+            DirectionOffset = variant.DirectionOffset };
     }
 
     private int DirectionOffsetFor(ItemBlock block)
@@ -896,8 +909,9 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         var layer = 0;
         if (block.Ground) layer = 1;
         if (layer >= layers.Count || block.PieceIndex >= layers[layer].Count) return 0;
-        foreach (var variant in layers[layer][block.PieceIndex])
-            if (variant.MacroblockName == block.MacroblockName) return variant.DirectionOffset;
+        var variant = layers[layer][block.PieceIndex];
+        foreach (var subvariant in variant.Subvariants)
+            if (subvariant.MacroblockName == block.MacroblockName) return variant.DirectionOffset;
         return 0;
     }
 
