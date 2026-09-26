@@ -51,7 +51,6 @@
 #Struct FreeformCandidate {
   Integer Piece;
   CMapEditorPlugin::CardinalDirections Direction;
-  Integer Priority;
 }
 
 #Const C_SelectionMode_None 0
@@ -63,6 +62,8 @@
 #Const C_SelectionMode_Tower 6
 #Const C_SelectionMode_RemoveWater 7
 #Const C_SelectionMode_RestoreWater 8
+#Const C_FreeformPlacementMode_SelectionOnly 0
+#Const C_FreeformPlacementMode_ConnectExisting 1
 
 declare Int3[] G_CurrentSelection;
 declare Boolean G_SelectionVisible;
@@ -70,6 +71,7 @@ declare Boolean G_Dragging;
 declare Boolean G_PreviousMouseDown;
 declare Int3 G_DragStart;
 declare Integer G_Mode;
+declare Integer G_FreeformPlacementMode;
 declare Integer G_TowerWidth;
 declare Integer G_TowerDepth;
 declare Boolean G_LastRollbackFailed;
@@ -126,6 +128,23 @@ Boolean Private_SameItemBlock(ItemBlock _A, ItemBlock _B) {
   return _A.MacroblockName == _B.MacroblockName && Private_SameCoord(_A.MacroblockCoord, _B.MacroblockCoord) && _A.MacroblockDir == _B.MacroblockDir && Private_SamePosition(_A.ItemPosition, _B.ItemPosition) && _A.Ground == _B.Ground && _A.Family == _B.Family && _A.PieceIndex == _B.PieceIndex && _A.Width == _B.Width && _A.Depth == _B.Depth;
 }
 
+Integer DirectionToIndex(CMapEditorPlugin::CardinalDirections _Direction) {
+  if (_Direction == CMapEditorPlugin::CardinalDirections::East) {
+    return 1;
+  }
+  if (_Direction == CMapEditorPlugin::CardinalDirections::South) {
+    return 2;
+  }
+  if (_Direction == CMapEditorPlugin::CardinalDirections::West) {
+    return 3;
+  }
+  return 0;
+}
+
+Boolean Private_SamePlacement(ItemBlock _Block, Placement _Placement) {
+  return Private_SameCoord(_Block.MacroblockCoord, _Placement.Coord) && _Block.MacroblockName == _Placement.MacroblockName && _Block.MacroblockDir == DirectionToIndex(_Placement.Direction) && _Block.Ground == _Placement.Ground && _Block.Family == _Placement.Family && _Block.PieceIndex == _Placement.PieceIndex && _Block.Width == _Placement.Width && _Block.Depth == _Placement.Depth;
+}
+
 Integer Private_IndexOfItemBlock(ItemBlock[] _Blocks, ItemBlock _Target) {
   for (Index, 0, _Blocks.count - 1) {
     if (Private_SameItemBlock(_Blocks[Index], _Target)) {
@@ -143,19 +162,6 @@ ItemBlock[] Private_WithoutItemBlockAt(ItemBlock[] _Blocks, Integer _Index) {
     }
   }
   return Remaining;
-}
-
-Integer DirectionToIndex(CMapEditorPlugin::CardinalDirections _Direction) {
-  if (_Direction == CMapEditorPlugin::CardinalDirections::East) {
-    return 1;
-  }
-  if (_Direction == CMapEditorPlugin::CardinalDirections::South) {
-    return 2;
-  }
-  if (_Direction == CMapEditorPlugin::CardinalDirections::West) {
-    return 3;
-  }
-  return 0;
 }
 
 CMapEditorPlugin::CardinalDirections DirectionFromIndex(Integer _Index) {
@@ -208,6 +214,10 @@ Void SetRemovedWater(Int3[] _Coords) {
 
 Void SetItemBlockGroup(Text _Family, ItemBlockVariant[][] _Variants) {
   G_ItemBlockGroups[_Family] = _Variants;
+}
+
+Void SetFreeformPlacementMode(Integer _Mode) {
+  G_FreeformPlacementMode = _Mode;
 }
 
 Void SetLayeredItemBlockGroup(Text _Family, ItemBlockVariant[][] _Bottom, ItemBlockVariant[][] _Middle, ItemBlockVariant[][] _Top) {
@@ -324,6 +334,7 @@ Void SetSelectionMode(Integer _NextMode) {
     Private_ResetSelectionChangeTracking();
   }
   G_Mode = _NextMode;
+  Cursor.HideDirectionalArrow = _NextMode != C_SelectionMode_None;
   G_Dragging = False;
   if (_NextMode == C_SelectionMode_RemoveWater) {
     SetCurrentSelection(Private_GetWaterSelectionCoords(GetRemovedWater()), True);
@@ -805,6 +816,23 @@ Integer Private_AddSide(Integer __Input_Mask, Integer _Side) {
   return _Mask;
 }
 
+Integer Private_UnionMask(Integer __Input_First, Integer _Second) {
+  declare Integer _First = __Input_First;
+  if (Private_HasSide(_Second, 1)) {
+    _First = Private_AddSide(_First, 1);
+  }
+  if (Private_HasSide(_Second, 2)) {
+    _First = Private_AddSide(_First, 2);
+  }
+  if (Private_HasSide(_Second, 4)) {
+    _First = Private_AddSide(_First, 4);
+  }
+  if (Private_HasSide(_Second, 8)) {
+    _First = Private_AddSide(_First, 8);
+  }
+  return _First;
+}
+
 Integer Private_RotateMask(Integer __Input_Mask, Integer _Turns) {
   declare Integer _Mask = __Input_Mask;
   for (Turn, 0, _Turns - 1) {
@@ -1056,7 +1084,7 @@ Boolean ExecutePlacementPlan(Placement[] _Plan) {
           if (Block.Family != Entry.Family) {
             return False;
           }
-          if (Private_SameCoord(Block.MacroblockCoord, Entry.Coord) && Block.MacroblockName == Entry.MacroblockName && Block.MacroblockDir == DirectionToIndex(Entry.Direction)) {
+          if (Private_SamePlacement(Block, Entry)) {
             continue;
           }
           RemovedIndices[Index] = True;
@@ -1083,7 +1111,7 @@ Boolean ExecutePlacementPlan(Placement[] _Plan) {
     if (ExistingByCell.existskey(Entry.Coord)) {
       foreach (Index in ExistingByCell[Entry.Coord]) {
         declare Block = Existing[Index];
-        if (!RemovedIndices.existskey(Index) && Private_SameCoord(Block.MacroblockCoord, Entry.Coord) && Block.MacroblockName == Entry.MacroblockName && Block.MacroblockDir == DirectionToIndex(Entry.Direction)) {
+        if (!RemovedIndices.existskey(Index) && Private_SamePlacement(Block, Entry)) {
           AlreadyThere = True;
         }
       }
@@ -1304,53 +1332,73 @@ Boolean PlaceRoadPath(Int3[] _Path, Text _Family) {
   return ExecutePlacementPlan(ResolveRoadPath(_Path, _Family));
 }
 
-FreeformCandidate ResolveFreeformOverlap(Integer _OldPiece, CMapEditorPlugin::CardinalDirections _OldDirection, Integer _NewPiece, CMapEditorPlugin::CardinalDirections _NewDirection) {
-  declare Result = FreeformCandidate { Piece = _NewPiece, Direction = _NewDirection, Priority = 0 };
-  declare Difference = (DirectionToIndex(_NewDirection) - DirectionToIndex(_OldDirection) + 4) % 4;
-  declare Perpendicular = Difference == 1 || Difference == 3;
-  declare Opposite = Difference == 2;
-  if (_OldPiece == 11 && _NewPiece == 11 && Perpendicular) {
-    Result.Piece = 4;
-    Result.Priority = 3;
-  } else if (((_OldPiece == 10 && _NewPiece == 9) || (_OldPiece == 9 && _NewPiece == 10)) && Opposite) {
-    Result.Piece = 3;
-    if (_OldPiece == 10) {
-      Result.Direction = _OldDirection;
-    } else {
-      Result.Direction = _NewDirection;
-    }
-    Result.Priority = 3;
+Integer Private_FreeformSideMask(Integer _Piece, CMapEditorPlugin::CardinalDirections _Direction) {
+  declare Mask = 0;
+  if (_Piece >= 0 && (_Piece <= 4 || _Piece == 14)) {
+    Mask = 15;
+  } else if (_Piece >= 5 && _Piece <= 8) {
+    Mask = 11;
   } else {
-    if ((_OldPiece == 5 && (_NewPiece == 11 || _NewPiece == 12)) || ((_OldPiece == 11 || _OldPiece == 12) && _NewPiece == 5)) {
-      Result.Piece = 1;
-      Result.Priority = 3;
-    } else if (_OldPiece == 12 && _NewPiece == 12 && !Perpendicular) {
-      Result.Piece = 11;
-      Result.Priority = 2;
+    if (_Piece == 9 || _Piece == 10) {
+      Mask = 3;
+    } else if (_Piece == 11) {
+      Mask = 5;
     } else {
-      if (_OldPiece == 12 && _NewPiece == 12 && Perpendicular) {
-        Result.Piece = 10;
-        if (Difference == 1) {
-          Result.Direction = _OldDirection;
-        } else {
-          Result.Direction = _NewDirection;
-        }
-        Result.Priority = 2;
-      } else if (_OldPiece == 12 && _NewPiece == 11 && Perpendicular) {
-        Result.Piece = 8;
-        Result.Priority = 2;
+      if (_Piece == 12) {
+        Mask = 1;
+      }
+    }
+  }
+  return Private_RotateMask(Mask, DirectionToIndex(_Direction));
+}
+
+Integer Private_FreeformDiagonalMask(Integer _Piece, CMapEditorPlugin::CardinalDirections _Direction) {
+  declare Mask = 0;
+  if (_Piece == 0) {
+    Mask = 14;
+  } else if (_Piece == 1) {
+    Mask = 12;
+  } else {
+    if (_Piece == 2) {
+      Mask = 10;
+    } else if (_Piece == 3) {
+      Mask = 8;
+    } else {
+      if (_Piece == 5) {
+        Mask = 3;
+      } else if (_Piece == 6) {
+        Mask = 2;
       } else {
-        if (_OldPiece == 9 && _NewPiece == 12 && Perpendicular) {
-          Result.Piece = 7;
-          if (Difference == 3) {
-            Result.Piece = 6;
+        if (_Piece == 7) {
+          Mask = 1;
+        } else if (_Piece == 9) {
+          Mask = 2;
+        } else {
+          if (_Piece == 14) {
+            Mask = 15;
           }
-          Result.Priority = 2;
         }
       }
     }
   }
-  return Result;
+  return Private_RotateMask(Mask, DirectionToIndex(_Direction));
+}
+
+Integer Private_FreeformSideCount(Integer _Mask) {
+  declare Count = 0;
+  if (Private_HasSide(_Mask, 1)) {
+    Count += 1;
+  }
+  if (Private_HasSide(_Mask, 2)) {
+    Count += 1;
+  }
+  if (Private_HasSide(_Mask, 4)) {
+    Count += 1;
+  }
+  if (Private_HasSide(_Mask, 8)) {
+    Count += 1;
+  }
+  return Count;
 }
 
 CMapEditorPlugin::CardinalDirections Private_DirectionForDiagonalMask(Integer _Mask, Integer _NorthMask) {
@@ -1362,52 +1410,15 @@ CMapEditorPlugin::CardinalDirections Private_DirectionForDiagonalMask(Integer _M
   return CMapEditorPlugin::CardinalDirections::North;
 }
 
-FreeformCandidate Private_ResolveFreeformTopology(Boolean[Int3] _Occupied, Int3 _Coord, Boolean _HasFiller) {
-  declare Mask = 0;
-  if (_Occupied.existskey(<_Coord.X, _Coord.Y, _Coord.Z - 1>)) {
-    Mask += 1;
-  }
-  if (_Occupied.existskey(<_Coord.X + 1, _Coord.Y, _Coord.Z>)) {
-    Mask += 2;
-  }
-  if (_Occupied.existskey(<_Coord.X, _Coord.Y, _Coord.Z + 1>)) {
-    Mask += 4;
-  }
-  if (_Occupied.existskey(<_Coord.X - 1, _Coord.Y, _Coord.Z>)) {
-    Mask += 8;
-  }
-  declare MissingDiagonals = 0;
-  if (!_Occupied.existskey(<_Coord.X - 1, _Coord.Y, _Coord.Z - 1>)) {
-    MissingDiagonals += 1;
-  }
-  if (!_Occupied.existskey(<_Coord.X + 1, _Coord.Y, _Coord.Z - 1>)) {
-    MissingDiagonals += 2;
-  }
-  if (!_Occupied.existskey(<_Coord.X + 1, _Coord.Y, _Coord.Z + 1>)) {
-    MissingDiagonals += 4;
-  }
-  if (!_Occupied.existskey(<_Coord.X - 1, _Coord.Y, _Coord.Z + 1>)) {
-    MissingDiagonals += 8;
-  }
-  declare Sides = 0;
-  if (Private_HasSide(Mask, 1)) {
-    Sides += 1;
-  }
-  if (Private_HasSide(Mask, 2)) {
-    Sides += 1;
-  }
-  if (Private_HasSide(Mask, 4)) {
-    Sides += 1;
-  }
-  if (Private_HasSide(Mask, 8)) {
-    Sides += 1;
-  }
-  declare Direction = RoadDirectionForMask(Mask);
+FreeformCandidate Private_ResolveFreeformMasks(Integer _Mask, Integer _Diagonals, Boolean _HasFiller) {
+  declare MissingDiagonals = 15 - _Diagonals;
+  declare Sides = Private_FreeformSideCount(_Mask);
+  declare Direction = RoadDirectionForMask(_Mask);
   declare Piece = 13;
   if (Sides == 1) {
     Piece = 12;
   } else if (Sides == 2) {
-    if (Mask == 5 || Mask == 10) {
+    if (_Mask == 5 || _Mask == 10) {
       Piece = 11;
     } else {
       declare Normalized = Private_RotateMask(MissingDiagonals, (4 - DirectionToIndex(Direction)) % 4);
@@ -1476,87 +1487,58 @@ FreeformCandidate Private_ResolveFreeformTopology(Boolean[Int3] _Occupied, Int3 
   return FreeformCandidate { Piece = Piece, Direction = Direction };
 }
 
-Boolean Private_IsFreeformBase(Integer _Piece) {
-  return _Piece >= 0 && (_Piece <= 4 || _Piece == 14);
+FreeformCandidate ResolveFreeformOverlap(Integer _OldPiece, CMapEditorPlugin::CardinalDirections _OldDirection, Integer _NewPiece, CMapEditorPlugin::CardinalDirections _NewDirection) {
+  declare Sides = Private_UnionMask(Private_FreeformSideMask(_OldPiece, _OldDirection), Private_FreeformSideMask(_NewPiece, _NewDirection));
+  declare Diagonals = Private_UnionMask(Private_FreeformDiagonalMask(_OldPiece, _OldDirection), Private_FreeformDiagonalMask(_NewPiece, _NewDirection));
+  return Private_ResolveFreeformMasks(Sides, Diagonals, _OldPiece == 14 || _NewPiece == 14);
 }
 
-Integer Private_FreeformSideCount(Integer _Piece) {
-  if (Private_IsFreeformBase(_Piece)) {
-    return 4;
+Integer Private_FreeformOccupiedSides(Boolean[Int3] _Occupied, Int3 _Coord) {
+  declare Mask = 0;
+  if (_Occupied.existskey(<_Coord.X, _Coord.Y, _Coord.Z - 1>)) {
+    Mask += 1;
   }
-  if (_Piece >= 5 && _Piece <= 8) {
-    return 3;
+  if (_Occupied.existskey(<_Coord.X + 1, _Coord.Y, _Coord.Z>)) {
+    Mask += 2;
   }
-  if (_Piece >= 9 && _Piece <= 11) {
-    return 2;
+  if (_Occupied.existskey(<_Coord.X, _Coord.Y, _Coord.Z + 1>)) {
+    Mask += 4;
   }
-  if (_Piece == 12) {
-    return 1;
+  if (_Occupied.existskey(<_Coord.X - 1, _Coord.Y, _Coord.Z>)) {
+    Mask += 8;
   }
-  return 0;
+  return Mask;
 }
 
-FreeformCandidate Private_ResolveFreeformRectanglePiece(Int3 _Coord, Integer _MinX, Integer _MaxX, Integer _MinZ, Integer _MaxZ) {
-  declare Piece = 13;
-  declare Direction = CMapEditorPlugin::CardinalDirections::North;
-  if (_MaxX > _MinX && _MaxZ == _MinZ) {
-    Piece = 11;
-    Direction = CMapEditorPlugin::CardinalDirections::East;
-    if (_Coord.X == _MinX || _Coord.X == _MaxX) {
-      Piece = 12;
-      declare Integer Inward;
-      if (_Coord.X == _MinX) {
-        Inward = 2;
-      } else {
-        Inward = 8;
-      }
-      Direction = RoadDirectionForMask(15 - Private_OppositeSide(Inward));
-    }
-  } else if (_MaxZ > _MinZ && _MaxX == _MinX) {
-    Piece = 11;
-    if (_Coord.Z == _MinZ || _Coord.Z == _MaxZ) {
-      Piece = 12;
-      declare Integer Inward;
-      if (_Coord.Z == _MinZ) {
-        Inward = 4;
-      } else {
-        Inward = 1;
-      }
-      Direction = RoadDirectionForMask(15 - Private_OppositeSide(Inward));
-    }
-  } else {
-    if (_MaxX > _MinX && _MaxZ > _MinZ) {
-      if ((_Coord.X == _MinX || _Coord.X == _MaxX) && (_Coord.Z == _MinZ || _Coord.Z == _MaxZ)) {
-        Piece = 9;
-        declare Mask = 0;
-        if (_Coord.X == _MinX) {
-          Mask += 2;
-        } else {
-          Mask += 8;
-        }
-        if (_Coord.Z == _MinZ) {
-          Mask += 4;
-        } else {
-          Mask += 1;
-        }
-        Direction = RoadDirectionForMask(Mask);
-      } else if (_Coord.X == _MinX || _Coord.X == _MaxX || _Coord.Z == _MinZ || _Coord.Z == _MaxZ) {
-        Piece = 5;
-        if (_Coord.X == _MinX) {
-          Direction = CMapEditorPlugin::CardinalDirections::East;
-        } else if (_Coord.X == _MaxX) {
-          Direction = CMapEditorPlugin::CardinalDirections::West;
-        } else {
-          if (_Coord.Z == _MinZ) {
-            Direction = CMapEditorPlugin::CardinalDirections::South;
-          }
-        }
-      } else {
-        Piece = 4;
-      }
-    }
+Integer Private_FreeformOccupiedDiagonals(Boolean[Int3] _Occupied, Int3 _Coord) {
+  declare Mask = 0;
+  if (_Occupied.existskey(<_Coord.X - 1, _Coord.Y, _Coord.Z - 1>)) {
+    Mask += 1;
   }
-  return FreeformCandidate { Piece = Piece, Direction = Direction };
+  if (_Occupied.existskey(<_Coord.X + 1, _Coord.Y, _Coord.Z - 1>)) {
+    Mask += 2;
+  }
+  if (_Occupied.existskey(<_Coord.X + 1, _Coord.Y, _Coord.Z + 1>)) {
+    Mask += 4;
+  }
+  if (_Occupied.existskey(<_Coord.X - 1, _Coord.Y, _Coord.Z + 1>)) {
+    Mask += 8;
+  }
+  return Mask;
+}
+
+FreeformCandidate ResolveFreeformCell(Boolean[Int3] _Occupied, Boolean[Int3] _Selected, Int3 _Coord, Integer _OldPiece, CMapEditorPlugin::CardinalDirections _OldDirection, Boolean _HasFiller) {
+  declare Sides = Private_FreeformOccupiedSides(_Occupied, _Coord);
+  declare Diagonals = Private_FreeformOccupiedDiagonals(_Occupied, _Coord);
+  if (_OldPiece >= 0) {
+    Sides = Private_UnionMask(Sides, Private_FreeformSideMask(_OldPiece, _OldDirection));
+    Diagonals = Private_UnionMask(Diagonals, Private_FreeformDiagonalMask(_OldPiece, _OldDirection));
+  }
+  if (_OldPiece >= 0 && _Selected.existskey(_Coord) && Private_FreeformSideCount(Private_FreeformOccupiedSides(_Selected, _Coord)) >= 3 && Private_FreeformSideCount(Sides) == 3) {
+    declare EdgeDirection = RoadDirectionForMask(Sides);
+    Diagonals = Private_UnionMask(Diagonals, Private_RotateMask(3, DirectionToIndex(EdgeDirection)));
+  }
+  return Private_ResolveFreeformMasks(Sides, Diagonals, _HasFiller);
 }
 
 Placement[] ResolveFreeform1x1(Int3[] _Selection, Text _Family) {
@@ -1617,6 +1599,16 @@ Placement[] ResolveFreeform1x1(Int3[] _Selection, Text _Family) {
         OldByCoord[OldCoord] = Old;
       }
     }
+    if (OldCoord.X <= MaxX && OldCoord.X + MathLib::Max(1, Old.Width) > MinX && OldCoord.Z <= MaxZ && OldCoord.Z + MathLib::Max(1, Old.Depth) > MinZ) {
+      foreach (Coord in Selected) {
+        if (Private_InsideItemBlock(Coord, Old) && (!Old.Ground || Old.Width != 1 || Old.Depth != 1)) {
+          return [];
+        }
+      }
+    }
+    if (G_FreeformPlacementMode == C_FreeformPlacementMode_SelectionOnly) {
+      continue;
+    }
     if (Old.Family != _Family || OldCoord.X < MinX - 2 || OldCoord.X > MaxX + 2 || OldCoord.Z < MinZ - 2 || OldCoord.Z > MaxZ + 2) {
       continue;
     }
@@ -1649,8 +1641,6 @@ Placement[] ResolveFreeform1x1(Int3[] _Selection, Text _Family) {
   }
   declare HasFiller = Private_VariantFor(_Family, 14, True, Selected[0]).MacroblockName != "";
   foreach (Coord in Affected) {
-    declare Desired = Private_ResolveFreeformTopology(Occupied, Coord, HasFiller);
-    declare SelectedHere = SelectedLookup.existskey(Coord);
     declare HasOld = OldByCoord.existskey(Coord);
     declare ItemBlock OldBlock;
     if (HasOld) {
@@ -1665,25 +1655,11 @@ Placement[] ResolveFreeform1x1(Int3[] _Selection, Text _Family) {
     if (HasOld) {
       OldLogicalDirection = Private_LogicalFreeformDirectionFor(OldBlock);
     }
-    if (SelectedHere && HasOld) {
-      declare Requested = Private_ResolveFreeformRectanglePiece(Coord, MinX, MaxX, MinZ, MaxZ);
-      if (OldBlock.PieceIndex == 12 && Desired.Piece == 8 && (Requested.Piece == 4 || Requested.Piece == 5 || Requested.Piece == 9)) {
-        Desired.Piece = 5;
-      }
-      declare Overlap = ResolveFreeformOverlap(OldBlock.PieceIndex, OldLogicalDirection, Requested.Piece, Requested.Direction);
-      if (Desired.Piece == 3 && Overlap.Piece == 3 && Private_OffsetDirection(Desired.Direction, 2) == Overlap.Direction) {
-        Desired.Direction = Private_OffsetDirection(Desired.Direction, 2);
-      }
-      if (!Private_IsFreeformBase(Desired.Piece) && Overlap.Priority > 0 && Private_FreeformSideCount(Desired.Piece) == Private_FreeformSideCount(Overlap.Piece)) {
-        if (Desired.Piece == Overlap.Piece) {
-          Overlap.Direction = Desired.Direction;
-        }
-        Desired = Overlap;
-      }
+    declare OldPiece = -1;
+    if (HasOld) {
+      OldPiece = OldBlock.PieceIndex;
     }
-    if (HasOld && ((OldBlock.PieceIndex == 14 && Desired.Piece != 14) || (Private_IsFreeformBase(OldBlock.PieceIndex) && !Private_IsFreeformBase(Desired.Piece)))) {
-      Desired = FreeformCandidate { Piece = OldBlock.PieceIndex, Direction = OldLogicalDirection };
-    }
+    declare Desired = ResolveFreeformCell(Occupied, SelectedLookup, Coord, OldPiece, OldLogicalDirection, HasFiller);
     if (HasOld && OldBlock.PieceIndex == Desired.Piece && OldLogicalDirection == Desired.Direction) {
       Result.add(Placement { Coord = Coord, MacroblockName = OldBlock.MacroblockName, Direction = DirectionFromIndex(OldBlock.MacroblockDir), Ground = True, Family = _Family, PieceIndex = OldBlock.PieceIndex, Width = 1, Depth = 1 });
       continue;
@@ -1955,6 +1931,10 @@ Boolean PlaceFreeform2x2(Int3[] _Selection, Text _Family, Integer _Height) {
 
 Integer GetMode() {
   return G_Mode;
+}
+
+Integer GetFreeformMode() {
+  return G_FreeformPlacementMode;
 }
 
 Boolean GetLastRollbackFailed() {

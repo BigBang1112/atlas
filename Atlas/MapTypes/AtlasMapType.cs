@@ -34,7 +34,7 @@ public class AtlasMapType : CMapType, IContext
                 new AtlasEngine.ItemBlockVariant { Subvariants = [
                     new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "S_BayDocksBase7\\BayDockBase7A.Macroblock.Gbx" },
                     new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "S_BayDocksBase7\\BayDockBase7B.Macroblock.Gbx" }
-                ] },
+                ], DirectionOffset = 2 },
                 new AtlasEngine.ItemBlockVariant { Subvariants = [
                     new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "P_BayDocksBase15\\BayDockBase15A.Macroblock.Gbx" },
                     new AtlasEngine.ItemBlockSubvariant { MacroblockName = dock + "P_BayDocksBase15\\BayDockBase15B.Macroblock.Gbx" },
@@ -107,6 +107,7 @@ public class AtlasMapType : CMapType, IContext
         atlas.Initialize();
         atlas.SetSelectionChangeEventsEnabled(false);
         atlas.SetSelectionMode(AtlasEngine.SelectionMode.Ground2D);
+        atlas.SetFreeformPlacementMode(AtlasEngine.FreeformPlacementMode.SelectionOnly);
         Log("Atlas BayDocks ready: drag on the ground to place docks.");
     }
 

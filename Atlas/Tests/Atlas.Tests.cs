@@ -46,8 +46,55 @@ public static class AtlasTests
         Check(AtlasEngine.ResolveFreeformOverlap(12, CMapEditorPlugin.CardinalDirections.North, 12,
             CMapEditorPlugin.CardinalDirections.East).Piece == 10,
             "perpendicular endpoints resolve to Corner8");
+        Check(AtlasEngine.ResolveFreeformOverlap(12, CMapEditorPlugin.CardinalDirections.North, 12,
+            CMapEditorPlugin.CardinalDirections.South).Piece == 11,
+            "opposite endpoints form a straight line");
+        Check(AtlasEngine.ResolveFreeformOverlap(12, CMapEditorPlugin.CardinalDirections.North, 11,
+            CMapEditorPlugin.CardinalDirections.East).Piece == 8,
+            "a perpendicular line across an endpoint forms Deadend12");
+        var corner = new Int3(8, 1, 8);
+        var cornerSelection = new Dictionary<Int3, bool>
+        {
+            [corner] = true,
+            [new Int3(9, 1, 8)] = true,
+            [new Int3(8, 1, 9)] = true,
+            [new Int3(9, 1, 9)] = true
+        };
+        var cornerOverEnd = AtlasEngine.ResolveFreeformCell(cornerSelection, cornerSelection,
+            corner, 12, CMapEditorPlugin.CardinalDirections.North, false);
+        Check(cornerOverEnd.Piece == 6 && cornerOverEnd.Direction == CMapEditorPlugin.CardinalDirections.East,
+            "Corner over TShaped forms Deadend4");
+        var edge = new Int3(9, 1, 8);
+        var edgeSelection = new Dictionary<Int3, bool>
+        {
+            [edge] = true,
+            [new Int3(8, 1, 8)] = true,
+            [new Int3(10, 1, 8)] = true,
+            [new Int3(9, 1, 9)] = true,
+            [new Int3(8, 2, 9)] = true,
+            [new Int3(10, 2, 9)] = true
+        };
+        Check(AtlasEngine.ResolveFreeformCell(edgeSelection, edgeSelection, edge, 12,
+            CMapEditorPlugin.CardinalDirections.East, false).Piece == 5,
+            "an area edge joined to TShaped stays a solid Deadend");
+        var base7 = AtlasEngine.ResolveFreeformOverlap(10, CMapEditorPlugin.CardinalDirections.South, 9,
+            CMapEditorPlugin.CardinalDirections.North);
+        var reversedBase7 = AtlasEngine.ResolveFreeformOverlap(9, CMapEditorPlugin.CardinalDirections.North, 10,
+            CMapEditorPlugin.CardinalDirections.South);
+        Check(base7.Piece == 3 && base7.Direction == CMapEditorPlugin.CardinalDirections.South &&
+            reversedBase7.Piece == base7.Piece && reversedBase7.Direction == base7.Direction,
+            "Base7 orientation does not depend on overlap order");
+        for (var piece = 0; piece <= 14; piece++)
+            Check(AtlasEngine.ResolveFreeformOverlap(piece, CMapEditorPlugin.CardinalDirections.North,
+                piece, CMapEditorPlugin.CardinalDirections.North).Piece == piece,
+                "overlapping an identical shape leaves its piece unchanged");
 
         var atlas = new AtlasEngine();
+        Check(atlas.FreeformMode == AtlasEngine.FreeformPlacementMode.SelectionOnly,
+            "freeform placement only changes selected cells by default");
+        atlas.SetFreeformPlacementMode(AtlasEngine.FreeformPlacementMode.ConnectExisting);
+        Check(atlas.FreeformMode == AtlasEngine.FreeformPlacementMode.ConnectExisting,
+            "freeform placement can connect neighboring tracked cells");
         var line = atlas.BuildSelection(new Int3(4, 2, 8), new Int3(1, 9, 8), AtlasEngine.SelectionMode.Line1D);
         Check(line.Count == 8, "line includes both endpoints");
         Check(line[0].X == 4 && line[0].Y == 2 && line[0].Z == 8, "line begins at cursor");

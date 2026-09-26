@@ -18,6 +18,12 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         RestoreWater
     }
 
+    public enum FreeformPlacementMode
+    {
+        SelectionOnly,
+        ConnectExisting
+    }
+
     public struct SelectionChange
     {
         public Int3 Start;
@@ -78,7 +84,6 @@ public class AtlasEngine : CMapEditorPlugin, ILib
     {
         public int Piece;
         public CardinalDirections Direction;
-        public int Priority;
     }
 
     private readonly List<Int3> currentSelection = [];
@@ -87,6 +92,7 @@ public class AtlasEngine : CMapEditorPlugin, ILib
     private bool previousMouseDown;
     private Int3 dragStart;
     private SelectionMode mode;
+    private FreeformPlacementMode freeformPlacementMode;
     private int towerWidth;
     private int towerDepth;
     private bool lastRollbackFailed;
@@ -106,6 +112,7 @@ public class AtlasEngine : CMapEditorPlugin, ILib
     private bool groundItemHeightsValid;
 
     public SelectionMode Mode => mode;
+    public FreeformPlacementMode FreeformMode => freeformPlacementMode;
     public bool LastRollbackFailed => lastRollbackFailed;
     public bool SelectionVisible => selectionVisible;
     public IList<Int3> CurrentSelection => currentSelection;
@@ -175,6 +182,14 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         a.Ground == b.Ground && a.Family == b.Family &&
         a.PieceIndex == b.PieceIndex && a.Width == b.Width && a.Depth == b.Depth;
 
+    private static bool SamePlacement(ItemBlock block, Placement placement) =>
+        SameCoord(block.MacroblockCoord, placement.Coord) &&
+        block.MacroblockName == placement.MacroblockName &&
+        block.MacroblockDir == DirectionToIndex(placement.Direction) &&
+        block.Ground == placement.Ground && block.Family == placement.Family &&
+        block.PieceIndex == placement.PieceIndex &&
+        block.Width == placement.Width && block.Depth == placement.Depth;
+
     private static int IndexOfItemBlock(IList<ItemBlock> blocks, ItemBlock target)
     {
         for (var index = 0; index < blocks.Count; index++)
@@ -238,6 +253,8 @@ public class AtlasEngine : CMapEditorPlugin, ILib
     }
 
     public void SetItemBlockGroup(string family, List<List<ItemBlockVariant>> variants) => itemBlockGroups[family] = variants;
+
+    public void SetFreeformPlacementMode(FreeformPlacementMode mode) => freeformPlacementMode = mode;
 
     public void SetLayeredItemBlockGroup(string family, List<List<ItemBlockVariant>> bottom,
         List<List<ItemBlockVariant>> middle, List<List<ItemBlockVariant>> top)
@@ -306,6 +323,7 @@ public class AtlasEngine : CMapEditorPlugin, ILib
     {
         if (mode != nextMode) ResetSelectionChangeTracking();
         mode = nextMode;
+        Cursor.HideDirectionalArrow = nextMode != SelectionMode.None;
         dragging = false;
         if (nextMode == SelectionMode.RemoveWater)
         {
@@ -831,6 +849,15 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         return mask;
     }
 
+    private static int UnionMask(int first, int second)
+    {
+        if (HasSide(second, 1)) first = AddSide(first, 1);
+        if (HasSide(second, 2)) first = AddSide(first, 2);
+        if (HasSide(second, 4)) first = AddSide(first, 4);
+        if (HasSide(second, 8)) first = AddSide(first, 8);
+        return first;
+    }
+
     private static int RotateMask(int mask, int turns)
     {
         for (var turn = 0; turn < turns; turn++)
@@ -976,8 +1003,7 @@ public class AtlasEngine : CMapEditorPlugin, ILib
                 {
                     var block = existing[index];
                     if (block.Family != entry.Family) return false;
-                    if (SameCoord(block.MacroblockCoord, entry.Coord) &&
-                        block.MacroblockName == entry.MacroblockName && block.MacroblockDir == DirectionToIndex(entry.Direction))
+                    if (SamePlacement(block, entry))
                         continue;
                     removedIndices[index] = true;
                 }
@@ -1004,8 +1030,7 @@ public class AtlasEngine : CMapEditorPlugin, ILib
                 foreach (var index in existingByCell[entry.Coord])
                 {
                     var block = existing[index];
-                    if (!removedIndices.ContainsKey(index) && SameCoord(block.MacroblockCoord, entry.Coord) &&
-                        block.MacroblockName == entry.MacroblockName && block.MacroblockDir == DirectionToIndex(entry.Direction))
+                    if (!removedIndices.ContainsKey(index) && SamePlacement(block, entry))
                         alreadyThere = true;
                 }
             if (alreadyThere) continue;
@@ -1230,38 +1255,50 @@ public class AtlasEngine : CMapEditorPlugin, ILib
     public static FreeformCandidate ResolveFreeformOverlap(int oldPiece, CardinalDirections oldDirection,
         int newPiece, CardinalDirections newDirection)
     {
-        var result = new FreeformCandidate { Piece = newPiece, Direction = newDirection, Priority = 0 };
-        var difference = (DirectionToIndex(newDirection) - DirectionToIndex(oldDirection) + 4) % 4;
-        var perpendicular = difference == 1 || difference == 3;
-        var opposite = difference == 2;
-        if (oldPiece == 11 && newPiece == 11 && perpendicular)
-        { result.Piece = 4; result.Priority = 3; }
-        else if (((oldPiece == 10 && newPiece == 9) || (oldPiece == 9 && newPiece == 10)) && opposite)
-        {
-            result.Piece = 3;
-            result.Direction = oldPiece == 10 ? oldDirection : newDirection;
-            result.Priority = 3;
-        }
-        else if ((oldPiece == 5 && (newPiece == 11 || newPiece == 12)) ||
-                 ((oldPiece == 11 || oldPiece == 12) && newPiece == 5))
-        { result.Piece = 1; result.Priority = 3; }
-        else if (oldPiece == 12 && newPiece == 12 && !perpendicular)
-        { result.Piece = 11; result.Priority = 2; }
-        else if (oldPiece == 12 && newPiece == 12 && perpendicular)
-        {
-            result.Piece = 10;
-            result.Direction = difference == 1 ? oldDirection : newDirection;
-            result.Priority = 2;
-        }
-        else if (oldPiece == 12 && newPiece == 11 && perpendicular)
-        { result.Piece = 8; result.Priority = 2; }
-        else if (oldPiece == 9 && newPiece == 12 && perpendicular)
-        {
-            result.Piece = 7;
-            if (difference == 3) result.Piece = 6;
-            result.Priority = 2;
-        }
-        return result;
+        var sides = UnionMask(FreeformSideMask(oldPiece, oldDirection),
+            FreeformSideMask(newPiece, newDirection));
+        var diagonals = UnionMask(FreeformDiagonalMask(oldPiece, oldDirection),
+            FreeformDiagonalMask(newPiece, newDirection));
+        return ResolveFreeformMasks(sides, diagonals, oldPiece == 14 || newPiece == 14);
+    }
+
+    // Both masks use clockwise bits 1, 2, 4, 8: N/E/S/W for sides,
+    // NW/NE/SE/SW for diagonals.
+    private static int FreeformSideMask(int piece, CardinalDirections direction)
+    {
+        var mask = 0;
+        if (piece >= 0 && (piece <= 4 || piece == 14)) mask = 15;
+        else if (piece >= 5 && piece <= 8) mask = 11;
+        else if (piece == 9 || piece == 10) mask = 3;
+        else if (piece == 11) mask = 5;
+        else if (piece == 12) mask = 1;
+        return RotateMask(mask, DirectionToIndex(direction));
+    }
+
+    // Diagonals supported by the shape itself, even when their cells are not tracked.
+    private static int FreeformDiagonalMask(int piece, CardinalDirections direction)
+    {
+        var mask = 0;
+        if (piece == 0) mask = 14;
+        else if (piece == 1) mask = 12;
+        else if (piece == 2) mask = 10;
+        else if (piece == 3) mask = 8;
+        else if (piece == 5) mask = 3;
+        else if (piece == 6) mask = 2;
+        else if (piece == 7) mask = 1;
+        else if (piece == 9) mask = 2;
+        else if (piece == 14) mask = 15;
+        return RotateMask(mask, DirectionToIndex(direction));
+    }
+
+    private static int FreeformSideCount(int mask)
+    {
+        var count = 0;
+        if (HasSide(mask, 1)) count++;
+        if (HasSide(mask, 2)) count++;
+        if (HasSide(mask, 4)) count++;
+        if (HasSide(mask, 8)) count++;
+        return count;
     }
 
     private static CardinalDirections DirectionForDiagonalMask(int mask, int northMask)
@@ -1271,24 +1308,30 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         return CardinalDirections.North;
     }
 
-    private static FreeformCandidate ResolveFreeformTopology(Dictionary<Int3, bool> occupied, Int3 coord, bool hasFiller)
+    private static int FreeformOccupiedSides(Dictionary<Int3, bool> occupied, Int3 coord)
     {
         var mask = 0;
         if (occupied.ContainsKey(new Int3(coord.X, coord.Y, coord.Z - 1))) mask += 1;
         if (occupied.ContainsKey(new Int3(coord.X + 1, coord.Y, coord.Z))) mask += 2;
         if (occupied.ContainsKey(new Int3(coord.X, coord.Y, coord.Z + 1))) mask += 4;
         if (occupied.ContainsKey(new Int3(coord.X - 1, coord.Y, coord.Z))) mask += 8;
-        var missingDiagonals = 0;
-        if (!occupied.ContainsKey(new Int3(coord.X - 1, coord.Y, coord.Z - 1))) missingDiagonals += 1;
-        if (!occupied.ContainsKey(new Int3(coord.X + 1, coord.Y, coord.Z - 1))) missingDiagonals += 2;
-        if (!occupied.ContainsKey(new Int3(coord.X + 1, coord.Y, coord.Z + 1))) missingDiagonals += 4;
-        if (!occupied.ContainsKey(new Int3(coord.X - 1, coord.Y, coord.Z + 1))) missingDiagonals += 8;
+        return mask;
+    }
 
-        var sides = 0;
-        if (HasSide(mask, 1)) sides++;
-        if (HasSide(mask, 2)) sides++;
-        if (HasSide(mask, 4)) sides++;
-        if (HasSide(mask, 8)) sides++;
+    private static int FreeformOccupiedDiagonals(Dictionary<Int3, bool> occupied, Int3 coord)
+    {
+        var mask = 0;
+        if (occupied.ContainsKey(new Int3(coord.X - 1, coord.Y, coord.Z - 1))) mask += 1;
+        if (occupied.ContainsKey(new Int3(coord.X + 1, coord.Y, coord.Z - 1))) mask += 2;
+        if (occupied.ContainsKey(new Int3(coord.X + 1, coord.Y, coord.Z + 1))) mask += 4;
+        if (occupied.ContainsKey(new Int3(coord.X - 1, coord.Y, coord.Z + 1))) mask += 8;
+        return mask;
+    }
+
+    private static FreeformCandidate ResolveFreeformMasks(int mask, int diagonals, bool hasFiller)
+    {
+        var missingDiagonals = 15 - diagonals;
+        var sides = FreeformSideCount(mask);
         var direction = RoadDirectionForMask(mask);
         var piece = 13; // Isolated cross.
         if (sides == 1) piece = 12; // Line end.
@@ -1348,62 +1391,27 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         return new FreeformCandidate { Piece = piece, Direction = direction };
     }
 
-    private static bool IsFreeformBase(int piece) => piece >= 0 && (piece <= 4 || piece == 14);
-
-    private static int FreeformSideCount(int piece)
+    internal static FreeformCandidate ResolveFreeformCell(Dictionary<Int3, bool> occupied,
+        Dictionary<Int3, bool> selected, Int3 coord, int oldPiece,
+        CardinalDirections oldDirection, bool hasFiller)
     {
-        if (IsFreeformBase(piece)) return 4;
-        if (piece >= 5 && piece <= 8) return 3;
-        if (piece >= 9 && piece <= 11) return 2;
-        if (piece == 12) return 1;
-        return 0;
-    }
-
-    private static FreeformCandidate ResolveFreeformRectanglePiece(Int3 coord, int minX, int maxX, int minZ, int maxZ)
-    {
-        var piece = 13;
-        var direction = CardinalDirections.North;
-        if (maxX > minX && maxZ == minZ)
+        var sides = FreeformOccupiedSides(occupied, coord);
+        var diagonals = FreeformOccupiedDiagonals(occupied, coord);
+        if (oldPiece >= 0)
         {
-            piece = 11;
-            direction = CardinalDirections.East;
-            if (coord.X == minX || coord.X == maxX)
-            {
-                piece = 12;
-                var inward = coord.X == minX ? 2 : 8;
-                direction = RoadDirectionForMask(15 - OppositeSide(inward));
-            }
+            sides = UnionMask(sides, FreeformSideMask(oldPiece, oldDirection));
+            diagonals = UnionMask(diagonals, FreeformDiagonalMask(oldPiece, oldDirection));
         }
-        else if (maxZ > minZ && maxX == minX)
+        if (oldPiece >= 0 && selected.ContainsKey(coord) &&
+            FreeformSideCount(FreeformOccupiedSides(selected, coord)) >= 3 &&
+            FreeformSideCount(sides) == 3)
         {
-            piece = 11;
-            if (coord.Z == minZ || coord.Z == maxZ)
-            {
-                piece = 12;
-                var inward = coord.Z == minZ ? 4 : 1;
-                direction = RoadDirectionForMask(15 - OppositeSide(inward));
-            }
+            // Only an area edge supplies both corner supports. A selected Corner
+            // supplies one and can resolve to Deadend4 or Deadend8 instead.
+            var edgeDirection = RoadDirectionForMask(sides);
+            diagonals = UnionMask(diagonals, RotateMask(3, DirectionToIndex(edgeDirection)));
         }
-        else if (maxX > minX && maxZ > minZ)
-        {
-            if ((coord.X == minX || coord.X == maxX) && (coord.Z == minZ || coord.Z == maxZ))
-            {
-                piece = 9;
-                var mask = 0;
-                if (coord.X == minX) mask += 2; else mask += 8;
-                if (coord.Z == minZ) mask += 4; else mask += 1;
-                direction = RoadDirectionForMask(mask);
-            }
-            else if (coord.X == minX || coord.X == maxX || coord.Z == minZ || coord.Z == maxZ)
-            {
-                piece = 5;
-                if (coord.X == minX) direction = CardinalDirections.East;
-                else if (coord.X == maxX) direction = CardinalDirections.West;
-                else if (coord.Z == minZ) direction = CardinalDirections.South;
-            }
-            else piece = 4;
-        }
-        return new FreeformCandidate { Piece = piece, Direction = direction };
+        return ResolveFreeformMasks(sides, diagonals, hasFiller);
     }
 
     public List<Placement> ResolveFreeform1x1(IList<Int3> selection, string family)
@@ -1456,6 +1464,12 @@ public class AtlasEngine : CMapEditorPlugin, ILib
                 if (oldByCoord.ContainsKey(oldCoord)) duplicateCoords[oldCoord] = true;
                 else oldByCoord[oldCoord] = old;
             }
+            if (oldCoord.X <= maxX && oldCoord.X + Math.Max(1, old.Width) > minX &&
+                oldCoord.Z <= maxZ && oldCoord.Z + Math.Max(1, old.Depth) > minZ)
+                foreach (var coord in selected)
+                    if (InsideItemBlock(coord, old) && (!old.Ground || old.Width != 1 || old.Depth != 1))
+                        return new List<Placement>();
+            if (freeformPlacementMode == FreeformPlacementMode.SelectionOnly) continue;
             if (old.Family != family || oldCoord.X < minX - 2 || oldCoord.X > maxX + 2 ||
                 oldCoord.Z < minZ - 2 || oldCoord.Z > maxZ + 2) continue;
             var nearby = false;
@@ -1480,42 +1494,16 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         var hasFiller = VariantFor(family, 14, true, selected[0]).MacroblockName != "";
         foreach (var coord in affected)
         {
-            var desired = ResolveFreeformTopology(occupied, coord, hasFiller);
-            var selectedHere = selectedLookup.ContainsKey(coord);
             var hasOld = oldByCoord.ContainsKey(coord);
             var oldBlock = hasOld ? oldByCoord[coord] : new ItemBlock { MacroblockName = "" };
             if (hasOld && (oldBlock.Family != family || duplicateCoords.ContainsKey(coord)))
                 return new List<Placement>();
             var oldLogicalDirection = CardinalDirections.North;
             if (hasOld) oldLogicalDirection = LogicalFreeformDirectionFor(oldBlock);
-            if (selectedHere && hasOld)
-            {
-                var requested = ResolveFreeformRectanglePiece(coord, minX, maxX, minZ, maxZ);
-                // A wide rectangle joining an existing line end forms a continuous
-                // three-sided dock, even if the old line leaves both diagonals open.
-                if (oldBlock.PieceIndex == 12 && desired.Piece == 8 &&
-                    (requested.Piece == 4 || requested.Piece == 5 || requested.Piece == 9))
-                    desired.Piece = 5;
-                var overlap = ResolveFreeformOverlap(oldBlock.PieceIndex, oldLogicalDirection,
-                    requested.Piece, requested.Direction);
-                // The opposite Corner8/Corner merge keeps Corner8's orientation.
-                // Only correct the Base7 case where topology faces exactly backward.
-                if (desired.Piece == 3 && overlap.Piece == 3 &&
-                    OffsetDirection(desired.Direction, 2) == overlap.Direction)
-                    desired.Direction = OffsetDirection(desired.Direction, 2);
-                // A fully surrounded cell has enough neighbor information to pick its
-                // base shape; pairwise overlap rules only fill gaps at exposed edges.
-                if (!IsFreeformBase(desired.Piece) && overlap.Priority > 0 &&
-                    FreeformSideCount(desired.Piece) == FreeformSideCount(overlap.Piece))
-                {
-                    if (desired.Piece == overlap.Piece) overlap.Direction = desired.Direction;
-                    desired = overlap;
-                }
-            }
-            if (hasOld && ((oldBlock.PieceIndex == 14 && desired.Piece != 14) ||
-                (IsFreeformBase(oldBlock.PieceIndex) && !IsFreeformBase(desired.Piece))))
-                desired = new FreeformCandidate { Piece = oldBlock.PieceIndex,
-                    Direction = oldLogicalDirection };
+            var oldPiece = -1;
+            if (hasOld) oldPiece = oldBlock.PieceIndex;
+            var desired = ResolveFreeformCell(occupied, selectedLookup, coord,
+                oldPiece, oldLogicalDirection, hasFiller);
             if (hasOld && oldBlock.PieceIndex == desired.Piece &&
                 oldLogicalDirection == desired.Direction)
             {

@@ -344,9 +344,9 @@ Expected rules:
 8. If at least 3x2 or 2x3 is formed, Deadend should be placed between Corner
 9. If a straight line occupies another straight line that is a +1/-1 direction, Base15 should be placed
 10. If Corner8 is formed opposite to Corner on the same coord, Base7 should be placed
-    - If Base7's occupied-cell direction is opposite the Corner8 direction in this overlap, turn Base7 by two quarter turns to match Corner8
+    - BayDocks Base7's model faces backward, so its variant has a two-quarter-turn direction offset
 11. Overlapping Corners resolve from all occupied neighboring cells: opposite diagonal gaps form Base5, while a single gap forms Base1
-12. A Base3 needs all four cardinal neighbors. Extending an existing TShaped with a wider rectangle into a three-sided cell yields Deadend; the old line's open diagonals alone must not select Deadend12
+12. A Base3 needs all four cardinal neighbors. Extending an existing TShaped with a wider rectangle at a three-sided area edge yields Deadend; the old line's open diagonals alone must not select Deadend12. A selected Corner joining TShaped keeps its single supported diagonal and can yield Deadend4 or Deadend8
 13. Expanding a Corner with another rectangle keeps the topology result; a three-sided cell becomes a Deadend instead of an assumed Base1
 
 In `ConnectExisting` mode, when a new rectangle touches or overlaps tracked pieces from the same family, resolve
@@ -355,52 +355,28 @@ within one cell of the selection, since a new cardinal or diagonal neighbor can
 change a corner, deadend, or base variant. Fully surrounded cells use the optional
 filler. Existing base variants and filler are not downgraded to an edge piece by a
 later selection.
-When the occupied-cell topology resolves a base piece, it takes precedence over
-pairwise overlap rules; for example, one missing diagonal selects Base1 even if
-two overlapping Corner directions alone would suggest Base5.
+The resolver combines cardinal connections and diagonally supported cells from the
+selection and tracked pieces. One mask-to-piece conversion chooses the result and
+its logical direction. Both masks are unions, so overlap order cannot change the
+result. Existing base pieces contribute all four sides and their supported diagonals,
+which prevents an unrelated edge from downgrading them. An area edge with three
+selected connections supplies both corner supports when joining an older piece;
+a selected Corner keeps only its one supported diagonal.
 
-Overlap orientation must be independent of placement order: two perpendicular
-TShaped pieces orient Corner8 from their combined connection sides, while an
-opposite Corner8 and Corner orient Base7 from Corner8. When the occupied-cell
-topology resolves the same piece, its direction takes precedence.
+#### Placement resolution system
 
-#### Placement resolution system (AI generated text)
-
-Treat a placement as a state-resolution problem, not as a sequence of immediate
-macroblock placements. This prevents the outcome from depending on which selected
-coordinate happens to be processed first.
-
-1. On every selection update, create a read-only snapshot of the selected fake-ground
-   coordinates and of the tracked item blocks already at those coordinates. A tracked
-   piece is represented by its family, piece index, and cardinal direction. An
-   untracked item block is a placement conflict, because Atlas cannot safely replace it.
-2. Convert the selected coordinates into a topology: connected components, cardinal
-   edges, line starts/ends, perpendicular crossings, 2x2 areas, and area boundaries.
-   Keep the topology separate from the current placed pieces; the selection describes
-   the requested addition, while the snapshot describes what it joins or overlays.
-3. Produce a default desired state for every affected coordinate: a single cell becomes
-   `Cross`, a standalone line becomes `TShaped`/`Straight`/mirrored `TShaped`, and an
-   empty 2x2 becomes four outward-facing `Corner` pieces. Give every desired state an
-   explicit cardinal direction.
-4. Resolve rules 3-13 against the complete snapshot and desired-state map. Rules add
-   candidate results rather than changing a coordinate in place. More specific overlay
-   outcomes (`Base15`, `Base7`, `Base5`, and `Base3`) win over boundary outcomes;
-   boundary outcomes win over the default line or area result. If equally specific
-   candidates disagree, mark the coordinate as a conflict instead of choosing one
-   arbitrarily.
-5. Apply the candidates simultaneously to produce the next desired-state map. Repeat
-   this resolution pass until the map is unchanged. If a state repeats or a conflict is
-   found, the selection is invalid and cannot be confirmed. This handles chained rules,
-   such as a line first changing a `TShaped` to `Straight` and then creating an overlay
-   piece, without relying on iteration order.
-6. Compare the final desired-state map with the snapshot and build a transaction:
-   unchanged pieces are retained, tracked pieces with a different state are removed,
-   and missing pieces are placed. Preflight all operations, including map bounds,
-   macroblock footprints, fake-ground height, and every exposed terrain connection.
-7. Only confirm the transaction when every operation is valid. Remove the required
-   tracked macroblocks, place the replacements with `PlaceMacroblock_NoDestruction`,
-   and update `Atlas_ItemBlocks` as one logical operation. If any operation fails,
-   restore every removed piece from the saved snapshot and leave the map unchanged.
+1. Validate the selected fake-ground rectangle and snapshot tracked blocks before
+   choosing any replacement. Reject conflicting families and overlapping footprints
+   larger than 1x1.
+2. In `SelectionOnly`, use selected cells for neighbor topology. In `ConnectExisting`,
+   include nearby tracked cells of the same family and update cells beside the
+   selection whose boundary changes.
+3. For each affected cell, union the cardinal and diagonal masks of occupied neighbors
+   with the tracked piece's logical shape. Convert the combined masks to a piece and
+   logical direction once, then apply the model and variant rotation offsets.
+4. Keep an identical tracked placement, or prepare its replacement. Validate and apply
+   the complete placement plan as one transaction; restore removed blocks if a
+   placement fails.
 
 During a drag, the system may resolve the current selection to provide a preview, but
 must not change the map. It runs the transaction only after the selection-confirm
