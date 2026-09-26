@@ -651,9 +651,7 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         selectionInputEnabled = true;
         groundItemHeightsValid = false;
         emitSelectionChanged = true;
-        previousItems.Clear();
-        foreach (var item in Items)
-            if (item != null) previousItems.Add(item.Position);
+        SnapshotItems();
         DrawSelection();
     }
 
@@ -1037,13 +1035,12 @@ public class AtlasEngine : CMapEditorPlugin, ILib
             RestoreNoItemBlocks(removalResult.Removed);
             return false;
         }
-        var previousCount = Items.Count;
         if (!PlaceMacroblock_NoDestruction(model, coord, direction))
         {
             RestoreNoItemBlocks(removalResult.Removed);
             return false;
         }
-        var position = Items.Count > previousCount ? Items[previousCount].Position : GetVec3FromCoord(coord);
+        var position = GetVec3FromCoord(coord);
         Metadata<List<ItemBlock>>.For(Map, out var storedBlocks, name: "Atlas_ItemBlocks");
         var added = new ItemBlock
         {
@@ -1093,13 +1090,13 @@ public class AtlasEngine : CMapEditorPlugin, ILib
 
     private void SnapshotItems()
     {
-        if (replayingHistory)
-        {
-            // The editor can expose newly placed anchors before Position is valid.
-            // Read them only after the replay has settled across update frames.
-            deferredItemSnapshotUpdates = 2;
-            return;
-        }
+        // Editor item anchors can exist before their Position becomes valid.
+        // A placement or removal must settle before their positions are read.
+        deferredItemSnapshotUpdates = 2;
+    }
+
+    private void CaptureItemsSnapshot()
+    {
         previousItems.Clear();
         foreach (var item in Items)
             if (item != null) previousItems.Add(item.Position);
@@ -1110,7 +1107,7 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         if (deferredItemSnapshotUpdates > 0)
         {
             deferredItemSnapshotUpdates--;
-            if (deferredItemSnapshotUpdates == 0) SnapshotItems();
+            if (deferredItemSnapshotUpdates == 0) CaptureItemsSnapshot();
             return;
         }
         if (Items.Count > previousItems.Count)
@@ -1150,7 +1147,7 @@ public class AtlasEngine : CMapEditorPlugin, ILib
                 RemovedBlocks = removedBlocks
             });
         }
-        SnapshotItems();
+        CaptureItemsSnapshot();
     }
 
     private List<ItemBlock> RemoveItemBlocksAtPosition(Vec3 position)
@@ -1495,14 +1492,12 @@ public class AtlasEngine : CMapEditorPlugin, ILib
                 RollbackPlacementPlan(removed, placed, removedNoItemBlocks);
                 return false;
             }
-            var previousCount = Items.Count;
             if (!PlaceMacroblock_NoDestruction(model, entry.Coord, entry.Direction))
             {
                 RollbackPlacementPlan(removed, placed, removedNoItemBlocks);
                 return false;
             }
-            var position = !replayingHistory && Items.Count > previousCount
-                ? Items[previousCount].Position : GetVec3FromCoord(entry.Coord);
+            var position = GetVec3FromCoord(entry.Coord);
             placed.Add(new ItemBlock
             {
                 MacroblockName = entry.MacroblockName, MacroblockCoord = entry.Coord,
@@ -1564,6 +1559,20 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         coord.Y == block.MacroblockCoord.Y && coord.X >= block.MacroblockCoord.X &&
         coord.X < block.MacroblockCoord.X + Math.Max(1, block.Width) &&
         coord.Z >= block.MacroblockCoord.Z && coord.Z < block.MacroblockCoord.Z + Math.Max(1, block.Depth);
+
+    private static bool ItemBlockTouchesCells(ItemBlock block, Dictionary<Int3, bool> cells,
+        int minX, int maxX, int minZ, int maxZ)
+    {
+        var coord = block.MacroblockCoord;
+        if (coord.X > maxX || coord.X + Math.Max(1, block.Width) <= minX ||
+            coord.Z > maxZ || coord.Z + Math.Max(1, block.Depth) <= minZ) return false;
+        var endX = Math.Min(maxX, coord.X + Math.Max(1, block.Width) - 1);
+        var endZ = Math.Min(maxZ, coord.Z + Math.Max(1, block.Depth) - 1);
+        for (var x = Math.Max(minX, coord.X); x <= endX; x++)
+        for (var z = Math.Max(minZ, coord.Z); z <= endZ; z++)
+            if (cells.ContainsKey(new Int3(x, coord.Y, z))) return true;
+        return false;
+    }
 
     private static bool ItemBlockFootprintsOverlap(ItemBlock block, Placement placement) =>
         block.MacroblockCoord.Y == placement.Coord.Y &&
@@ -2040,11 +2049,22 @@ public class AtlasEngine : CMapEditorPlugin, ILib
                 if (oldByCoord.ContainsKey(oldCoord)) duplicateCoords[oldCoord] = true;
                 else oldByCoord[oldCoord] = old;
             }
-            if (oldCoord.X <= maxX && oldCoord.X + Math.Max(1, old.Width) > minX &&
+            if ((!old.Ground || old.Width != 1 || old.Depth != 1) &&
+                oldCoord.X <= maxX && oldCoord.X + Math.Max(1, old.Width) > minX &&
                 oldCoord.Z <= maxZ && oldCoord.Z + Math.Max(1, old.Depth) > minZ)
-                foreach (var coord in selected)
-                    if (InsideItemBlock(coord, old) && (!old.Ground || old.Width != 1 || old.Depth != 1))
+            {
+                // Check only the old block's overlapping footprint, rather than
+                // scanning every selected cell for each existing item.
+                var overlapMaxX = Math.Min(maxX, oldCoord.X + Math.Max(1, old.Width) - 1);
+                var overlapMaxZ = Math.Min(maxZ, oldCoord.Z + Math.Max(1, old.Depth) - 1);
+                for (var x = Math.Max(minX, oldCoord.X); x <= overlapMaxX; x++)
+                for (var z = Math.Max(minZ, oldCoord.Z); z <= overlapMaxZ; z++)
+                {
+                    var cell = new Int3(x, 0, z);
+                    if (selectedByCell.ContainsKey(cell) && selectedByCell[cell].Y == oldCoord.Y)
                         return new List<Placement>();
+                }
+            }
             if (freeformPlacementMode == FreeformPlacementMode.SelectionOnly) continue;
             if (old.Family != family || oldCoord.X < minX - 2 || oldCoord.X > maxX + 2 ||
                 oldCoord.Z < minZ - 2 || oldCoord.Z > maxZ + 2) continue;
@@ -2111,10 +2131,10 @@ public class AtlasEngine : CMapEditorPlugin, ILib
             if (!WithinMap(coord)) return false;
             selected[coord] = true;
         }
-        var before = CopyItemBlocks(GetItemBlockList());
+        var existing = GetItemBlockList();
         var toRemove = new List<ItemBlock>();
         var removedCoords = new Dictionary<Int3, bool>();
-        foreach (var block in before)
+        foreach (var block in existing)
         {
             if (!selected.ContainsKey(block.MacroblockCoord) || block.Family != family) continue;
             if (!block.Ground || block.Width != 1 || block.Depth != 1) return false;
@@ -2137,7 +2157,7 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         var sideMasks = new Dictionary<Int3, int>();
         var diagonalMasks = new Dictionary<Int3, int>();
         var neighbors = new List<ItemBlock>();
-        foreach (var block in before)
+        foreach (var block in existing)
         {
             if (block.Family != family || !block.Ground || block.Width != 1 || block.Depth != 1 ||
                 removedCoords.ContainsKey(block.MacroblockCoord)) continue;
@@ -2179,6 +2199,21 @@ public class AtlasEngine : CMapEditorPlugin, ILib
             return false;
         }
 
+        var affectedCells = new Dictionary<Int3, bool>();
+        foreach (var block in toRemove) affectedCells[block.MacroblockCoord] = true;
+        foreach (var entry in plan)
+        {
+            affectedCells[entry.Coord] = true;
+            minX = Math.Min(minX, entry.Coord.X);
+            maxX = Math.Max(maxX, entry.Coord.X);
+            minZ = Math.Min(minZ, entry.Coord.Z);
+            maxZ = Math.Max(maxZ, entry.Coord.Z);
+        }
+        var beforeAffected = new List<ItemBlock>();
+        foreach (var block in existing)
+            if (ItemBlockTouchesCells(block, affectedCells, minX, maxX, minZ, maxZ))
+                beforeAffected.Add(block);
+
         var wasReplaying = replayingHistory;
         replayingHistory = true;
         var applied = ApplyResolvedChangesCore(toRemove, plan, GetRemovedWater(), false);
@@ -2189,22 +2224,36 @@ public class AtlasEngine : CMapEditorPlugin, ILib
             return false;
         }
 
-        var after = CopyItemBlocks(GetItemBlockList());
+        var afterAffected = new List<ItemBlock>();
         var addedBases = new List<NoItemReplacement>();
         var coveredColumns = new Dictionary<Int3, bool>();
-        foreach (var block in after)
-            if (block.Ground)
-                for (var x = block.MacroblockCoord.X; x < block.MacroblockCoord.X + Math.Max(1, block.Width); x++)
-                for (var z = block.MacroblockCoord.Z; z < block.MacroblockCoord.Z + Math.Max(1, block.Depth); z++)
-                    coveredColumns[new Int3(x, 0, z)] = true;
-        var baseSucceeded = true;
         var baseColumns = new Dictionary<Int3, bool>();
+        foreach (var block in toRemove)
+            baseColumns[new Int3(block.MacroblockCoord.X, 0, block.MacroblockCoord.Z)] = true;
+        foreach (var block in GetItemBlockList())
+        {
+            if (ItemBlockTouchesCells(block, affectedCells, minX, maxX, minZ, maxZ))
+                afterAffected.Add(block);
+            if (!block.Ground || block.MacroblockCoord.X > maxX ||
+                block.MacroblockCoord.X + Math.Max(1, block.Width) <= minX ||
+                block.MacroblockCoord.Z > maxZ ||
+                block.MacroblockCoord.Z + Math.Max(1, block.Depth) <= minZ) continue;
+            var endX = Math.Min(maxX, block.MacroblockCoord.X + Math.Max(1, block.Width) - 1);
+            var endZ = Math.Min(maxZ, block.MacroblockCoord.Z + Math.Max(1, block.Depth) - 1);
+            for (var x = Math.Max(minX, block.MacroblockCoord.X); x <= endX; x++)
+            for (var z = Math.Max(minZ, block.MacroblockCoord.Z); z <= endZ; z++)
+            {
+                var column = new Int3(x, 0, z);
+                if (baseColumns.ContainsKey(column)) coveredColumns[column] = true;
+            }
+        }
+        var baseSucceeded = true;
         foreach (var block in toRemove)
         {
             var coord = block.MacroblockCoord;
             var column = new Int3(coord.X, 0, coord.Z);
-            if (baseColumns.ContainsKey(column)) continue;
-            baseColumns[column] = true;
+            if (!baseColumns.ContainsKey(column)) continue;
+            baseColumns.Remove(column);
             if (coveredColumns.ContainsKey(column) || noItemBlockName == "") continue;
             var baseCoord = new Int3(coord.X, CollectionGroundY, coord.Z);
             var placed = baseMacroblock != null
@@ -2225,7 +2274,8 @@ public class AtlasEngine : CMapEditorPlugin, ILib
                 baseSucceeded = false;
             }
         }
-        PushItemEditWithBase(ItemBlockDifference(before, after), ItemBlockDifference(after, before),
+        PushItemEditWithBase(ItemBlockDifference(beforeAffected, afterAffected),
+            ItemBlockDifference(afterAffected, beforeAffected),
             new List<NoItemReplacement>(), addedBases);
         return baseSucceeded;
     }

@@ -334,16 +334,7 @@ Void SetItemBlockList(ItemBlock[] _Blocks) {
 }
 
 Void Private_SnapshotItems() {
-  if (G_ReplayingHistory) {
-    G_DeferredItemSnapshotUpdates = 2;
-    return;
-  }
-  G_PreviousItems.clear();
-  foreach (Item in Items) {
-    if (Item != Null) {
-      G_PreviousItems.add(Item.Position);
-    }
-  }
+  G_DeferredItemSnapshotUpdates = 2;
 }
 
 Void Private_RollbackPlacementPlan(ItemBlock[] _Removed, ItemBlock[] _Placed, NoItemReplacement[] _RemovedNoItemBlocks) {
@@ -588,17 +579,11 @@ Boolean ExecutePlacementPlan(Placement[] _Plan) {
       Private_RollbackPlacementPlan(Removed, Placed, RemovedNoItemBlocks);
       return False;
     }
-    declare PreviousCount = Items.count;
     if (!PlaceMacroblock_NoDestruction(Model, Entry.Coord, Entry.Direction)) {
       Private_RollbackPlacementPlan(Removed, Placed, RemovedNoItemBlocks);
       return False;
     }
-    declare Vec3 Position;
-    if (!G_ReplayingHistory && Items.count > PreviousCount) {
-      Position = Items[PreviousCount].Position;
-    } else {
-      Position = GetVec3FromCoord(Entry.Coord);
-    }
+    declare Position = GetVec3FromCoord(Entry.Coord);
     Placed.add(ItemBlock { MacroblockName = Entry.MacroblockName, MacroblockCoord = Entry.Coord, MacroblockDir = DirectionToIndex(Entry.Direction), ItemPosition = Position, Ground = Entry.Ground, Family = Entry.Family, PieceIndex = Entry.PieceIndex, Width = Entry.Width, Depth = Entry.Depth });
   }
   if (Removed.count > 0 || Placed.count > 0) {
@@ -996,13 +981,17 @@ Void Initialize() {
   G_SelectionInputEnabled = True;
   G_GroundItemHeightsValid = False;
   G_EmitSelectionChanged = True;
+  Private_SnapshotItems();
+  Private_DrawSelection();
+}
+
+Void Private_CaptureItemsSnapshot() {
   G_PreviousItems.clear();
   foreach (Item in Items) {
     if (Item != Null) {
       G_PreviousItems.add(Item.Position);
     }
   }
-  Private_DrawSelection();
 }
 
 ItemBlock[] Private_RemoveItemBlocksAtPosition(Vec3 _Position) {
@@ -1029,7 +1018,7 @@ Void SyncManuallyRemovedItems() {
   if (G_DeferredItemSnapshotUpdates > 0) {
     G_DeferredItemSnapshotUpdates -= 1;
     if (G_DeferredItemSnapshotUpdates == 0) {
-      Private_SnapshotItems();
+      Private_CaptureItemsSnapshot();
     }
     return;
   }
@@ -1066,7 +1055,7 @@ Void SyncManuallyRemovedItems() {
     declare RemovedBlocks = Private_RemoveItemBlocksAtPosition(Position);
     G_ItemRemovals.add(ItemRemoval { Position = Position, RemovedBlocks = RemovedBlocks });
   }
-  Private_SnapshotItems();
+  Private_CaptureItemsSnapshot();
 }
 
 Int3[] BuildSelection(Int3 _Start, Int3 _End, Integer _SelectionMode) {
@@ -1415,17 +1404,11 @@ Boolean PlaceItemBlockWithFootprint(Text _MacroblockName, Int3 _Coord, CMapEdito
     Private_RestoreNoItemBlocks(RemovalResult.Removed);
     return False;
   }
-  declare PreviousCount = Items.count;
   if (!PlaceMacroblock_NoDestruction(Model, _Coord, _Direction)) {
     Private_RestoreNoItemBlocks(RemovalResult.Removed);
     return False;
   }
-  declare Vec3 Position;
-  if (Items.count > PreviousCount) {
-    Position = Items[PreviousCount].Position;
-  } else {
-    Position = GetVec3FromCoord(_Coord);
-  }
+  declare Position = GetVec3FromCoord(_Coord);
   declare metadata ItemBlock[] Atlas_ItemBlocks as StoredBlocks for Map;
   declare Added = ItemBlock { MacroblockName = _MacroblockName, MacroblockCoord = _Coord, MacroblockDir = DirectionToIndex(_Direction), ItemPosition = Position, Ground = _Ground, Family = _Family, PieceIndex = _PieceIndex, Width = _Width, Depth = _Depth };
   StoredBlocks/* not Null here */.add(Added);
@@ -1694,6 +1677,23 @@ CMapEditorPlugin::CardinalDirections Private_LogicalFreeformDirectionFor(ItemBlo
 
 Boolean Private_InsideFootprint(Int3 _Coord, Placement _Placement) {
   return _Coord.Y == _Placement.Coord.Y && _Coord.X >= _Placement.Coord.X && _Coord.X < _Placement.Coord.X + MathLib::Max(1, _Placement.Width) && _Coord.Z >= _Placement.Coord.Z && _Coord.Z < _Placement.Coord.Z + MathLib::Max(1, _Placement.Depth);
+}
+
+Boolean Private_ItemBlockTouchesCells(ItemBlock _Block, Boolean[Int3] _Cells, Integer _MinX, Integer _MaxX, Integer _MinZ, Integer _MaxZ) {
+  declare Coord = _Block.MacroblockCoord;
+  if (Coord.X > _MaxX || Coord.X + MathLib::Max(1, _Block.Width) <= _MinX || Coord.Z > _MaxZ || Coord.Z + MathLib::Max(1, _Block.Depth) <= _MinZ) {
+    return False;
+  }
+  declare EndX = MathLib::Min(_MaxX, Coord.X + MathLib::Max(1, _Block.Width) - 1);
+  declare EndZ = MathLib::Min(_MaxZ, Coord.Z + MathLib::Max(1, _Block.Depth) - 1);
+  for (X, MathLib::Max(_MinX, Coord.X), EndX) {
+    for (Z, MathLib::Max(_MinZ, Coord.Z), EndZ) {
+      if (_Cells.existskey(<X, Coord.Y, Z>)) {
+        return True;
+      }
+    }
+  }
+  return False;
 }
 
 Boolean Private_ItemBlockFootprintsOverlap(ItemBlock _Block, Placement _Placement) {
@@ -2203,10 +2203,15 @@ Placement[] ResolveFreeform1x1(Int3[] _Selection, Text _Family) {
         OldByCoord[OldCoord] = Old;
       }
     }
-    if (OldCoord.X <= MaxX && OldCoord.X + MathLib::Max(1, Old.Width) > MinX && OldCoord.Z <= MaxZ && OldCoord.Z + MathLib::Max(1, Old.Depth) > MinZ) {
-      foreach (Coord in Selected) {
-        if (Private_InsideItemBlock(Coord, Old) && (!Old.Ground || Old.Width != 1 || Old.Depth != 1)) {
-          return [];
+    if ((!Old.Ground || Old.Width != 1 || Old.Depth != 1) && OldCoord.X <= MaxX && OldCoord.X + MathLib::Max(1, Old.Width) > MinX && OldCoord.Z <= MaxZ && OldCoord.Z + MathLib::Max(1, Old.Depth) > MinZ) {
+      declare OverlapMaxX = MathLib::Min(MaxX, OldCoord.X + MathLib::Max(1, Old.Width) - 1);
+      declare OverlapMaxZ = MathLib::Min(MaxZ, OldCoord.Z + MathLib::Max(1, Old.Depth) - 1);
+      for (X, MathLib::Max(MinX, OldCoord.X), OverlapMaxX) {
+        for (Z, MathLib::Max(MinZ, OldCoord.Z), OverlapMaxZ) {
+          declare Cell = <X, 0, Z>;
+          if (SelectedByCell.existskey(Cell) && SelectedByCell[Cell].Y == OldCoord.Y) {
+            return [];
+          }
         }
       }
     }
@@ -2292,10 +2297,10 @@ Boolean RemoveFreeform1x1(Int3[] _Selection, Text _Family) {
     }
     Selected[Coord] = True;
   }
-  declare Before = Private_CopyItemBlocks(GetItemBlockList());
+  declare Existing = GetItemBlockList();
   declare ItemBlock[] ToRemove;
   declare Boolean[Int3] RemovedCoords;
-  foreach (Block in Before) {
+  foreach (Block in Existing) {
     if (!Selected.existskey(Block.MacroblockCoord) || Block.Family != _Family) {
       continue;
     }
@@ -2321,7 +2326,7 @@ Boolean RemoveFreeform1x1(Int3[] _Selection, Text _Family) {
   declare Integer[Int3] SideMasks;
   declare Integer[Int3] DiagonalMasks;
   declare ItemBlock[] Neighbors;
-  foreach (Block in Before) {
+  foreach (Block in Existing) {
     if (Block.Family != _Family || !Block.Ground || Block.Width != 1 || Block.Depth != 1 || RemovedCoords.existskey(Block.MacroblockCoord)) {
       continue;
     }
@@ -2374,6 +2379,23 @@ Boolean RemoveFreeform1x1(Int3[] _Selection, Text _Family) {
     log("No item block '" ^ G_NoItemBlockName ^ "' was not found.");
     return False;
   }
+  declare Boolean[Int3] AffectedCells;
+  foreach (Block in ToRemove) {
+    AffectedCells[Block.MacroblockCoord] = True;
+  }
+  foreach (Entry in Plan) {
+    AffectedCells[Entry.Coord] = True;
+    MinX = MathLib::Min(MinX, Entry.Coord.X);
+    MaxX = MathLib::Max(MaxX, Entry.Coord.X);
+    MinZ = MathLib::Min(MinZ, Entry.Coord.Z);
+    MaxZ = MathLib::Max(MaxZ, Entry.Coord.Z);
+  }
+  declare ItemBlock[] BeforeAffected;
+  foreach (Block in Existing) {
+    if (Private_ItemBlockTouchesCells(Block, AffectedCells, MinX, MaxX, MinZ, MaxZ)) {
+      BeforeAffected.add(Block);
+    }
+  }
   declare WasReplaying = G_ReplayingHistory;
   G_ReplayingHistory = True;
   declare Applied = Private_ApplyResolvedChangesCore(ToRemove, Plan, GetRemovedWater(), False);
@@ -2384,27 +2406,39 @@ Boolean RemoveFreeform1x1(Int3[] _Selection, Text _Family) {
     }
     return False;
   }
-  declare After = Private_CopyItemBlocks(GetItemBlockList());
+  declare ItemBlock[] AfterAffected;
   declare NoItemReplacement[] AddedBases;
   declare Boolean[Int3] CoveredColumns;
-  foreach (Block in After) {
-    if (Block.Ground) {
-      for (X, Block.MacroblockCoord.X, Block.MacroblockCoord.X + MathLib::Max(1, Block.Width) - 1) {
-        for (Z, Block.MacroblockCoord.Z, Block.MacroblockCoord.Z + MathLib::Max(1, Block.Depth) - 1) {
-          CoveredColumns[<X, 0, Z>] = True;
+  declare Boolean[Int3] BaseColumns;
+  foreach (Block in ToRemove) {
+    BaseColumns[<Block.MacroblockCoord.X, 0, Block.MacroblockCoord.Z>] = True;
+  }
+  foreach (Block in GetItemBlockList()) {
+    if (Private_ItemBlockTouchesCells(Block, AffectedCells, MinX, MaxX, MinZ, MaxZ)) {
+      AfterAffected.add(Block);
+    }
+    if (!Block.Ground || Block.MacroblockCoord.X > MaxX || Block.MacroblockCoord.X + MathLib::Max(1, Block.Width) <= MinX || Block.MacroblockCoord.Z > MaxZ || Block.MacroblockCoord.Z + MathLib::Max(1, Block.Depth) <= MinZ) {
+      continue;
+    }
+    declare EndX = MathLib::Min(MaxX, Block.MacroblockCoord.X + MathLib::Max(1, Block.Width) - 1);
+    declare EndZ = MathLib::Min(MaxZ, Block.MacroblockCoord.Z + MathLib::Max(1, Block.Depth) - 1);
+    for (X, MathLib::Max(MinX, Block.MacroblockCoord.X), EndX) {
+      for (Z, MathLib::Max(MinZ, Block.MacroblockCoord.Z), EndZ) {
+        declare Column = <X, 0, Z>;
+        if (BaseColumns.existskey(Column)) {
+          CoveredColumns[Column] = True;
         }
       }
     }
   }
   declare BaseSucceeded = True;
-  declare Boolean[Int3] BaseColumns;
   foreach (Block in ToRemove) {
     declare Coord = Block.MacroblockCoord;
     declare Column = <Coord.X, 0, Coord.Z>;
-    if (BaseColumns.existskey(Column)) {
+    if (!BaseColumns.existskey(Column)) {
       continue;
     }
-    BaseColumns[Column] = True;
+    BaseColumns.removekey(Column);
     if (CoveredColumns.existskey(Column) || G_NoItemBlockName == "") {
       continue;
     }
@@ -2430,7 +2464,7 @@ Boolean RemoveFreeform1x1(Int3[] _Selection, Text _Family) {
       BaseSucceeded = False;
     }
   }
-  Private_PushItemEditWithBase(Private_ItemBlockDifference(Before, After), Private_ItemBlockDifference(After, Before), [], AddedBases);
+  Private_PushItemEditWithBase(Private_ItemBlockDifference(BeforeAffected, AfterAffected), Private_ItemBlockDifference(AfterAffected, BeforeAffected), [], AddedBases);
   return BaseSucceeded;
 }
 
