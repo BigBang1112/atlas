@@ -6,14 +6,22 @@ public class AtlasMapType : CMapType, IContext
 {
     private readonly AtlasEngine atlas = new();
     private bool panelHovered;
+    private string selectedGroundGroup = "BayDocks";
+
+    private void Kek()
+    {
+
+    }
     
     public void Main()
     {
         // Paths are relative to ManiaPlanetUserData\Blocks. Dock folders match the freeform
         // 1x1 piece indices, with their files as subvariants; the final entry is the filler.
         var dock = "Lagoon\\Z_Bay\\Z_BayDock\\Z_BayDock\\";
+        var esplanade = "Lagoon\\Z_Bay\\Z_BayDock\\Y_BayEsplanade\\";
         var bayBase = "Lagoon\\Z_Bay\\Z_BayDock\\A_BayBase\\";
         atlas.SetNoItemBlockName(bayBase + "BaySeaBase.Macroblock.Gbx");
+        atlas.SetBaseGroundGroup("BaySea");
         atlas.SetItemBlockGroup("BayDocks", [
             [], // No air variants.
             [
@@ -96,6 +104,82 @@ public class AtlasMapType : CMapType, IContext
             ]
         ]);
 
+        atlas.SetItemBlockGroundPlacement("BayDocks", 0, "BaySea", -1);
+        atlas.SetItemBlockGroup("BayEsplanade", [
+            [],
+            [
+                new AtlasEngine.ItemBlockVariant { Subvariants = [
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = esplanade + "X_BayEsplanadeBase1\\BayEsplanadeBase1A.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = esplanade + "X_BayEsplanadeBase1\\BayEsplanadeBase1B.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = esplanade + "X_BayEsplanadeBase1\\BayEsplanadeBase1C.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = esplanade + "X_BayEsplanadeBase1\\BayEsplanadeBase1D.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = esplanade + "X_BayEsplanadeBase1\\BayEsplanadeBase1E.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = esplanade + "X_BayEsplanadeBase1\\BayEsplanadeBase1F.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = esplanade + "X_BayEsplanadeBase1\\BayEsplanadeBase1G.Macroblock.Gbx" }
+                ], DirectionOffset = 3 },
+                new AtlasEngine.ItemBlockVariant { Subvariants = [
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = esplanade + "V_BayEsplanadeBase3\\BayEsplanadeBase3A.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = esplanade + "V_BayEsplanadeBase3\\BayEsplanadeBase3B.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = esplanade + "V_BayEsplanadeBase3\\BayEsplanadeBase3C.Macroblock.Gbx" }
+                ] },
+                new AtlasEngine.ItemBlockVariant { Subvariants = [
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = esplanade + "W_BayEsplanadeBase5\\BayEsplanadeBase5A.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = esplanade + "W_BayEsplanadeBase5\\BayEsplanadeBase5B.Macroblock.Gbx" }
+                ], DirectionOffset = 1 },
+                new AtlasEngine.ItemBlockVariant { Subvariants = [
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = esplanade + "S_BayEsplanadeBase7\\BayEsplanadeBase7A.Macroblock.Gbx" }
+                ] },
+                new AtlasEngine.ItemBlockVariant { Subvariants = [
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = esplanade + "P_BayEsplanadeBase15\\BayEsplanadeBase15A.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = esplanade + "P_BayEsplanadeBase15\\BayEsplanadeBase15B.Macroblock.Gbx" }
+                ] },
+                new AtlasEngine.ItemBlockVariant { Subvariants = [
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = esplanade + "Z_BayEsplanadeDeadend\\BayEsplanadeDeadendA.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = esplanade + "Z_BayEsplanadeDeadend\\BayEsplanadeDeadendB.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = esplanade + "Z_BayEsplanadeDeadend\\BayEsplanadeDeadendC.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = esplanade + "Z_BayEsplanadeDeadend\\BayEsplanadeDeadendD.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = esplanade + "Z_BayEsplanadeDeadend\\BayEsplanadeDeadendE.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = esplanade + "Z_BayEsplanadeDeadend\\BayEsplanadeDeadendF.Macroblock.Gbx" }
+                ] },
+                new AtlasEngine.ItemBlockVariant { Subvariants = [
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = esplanade + "U_BayEsplanadeDeadend4\\BayEsplanadeDeadend4A.Macroblock.Gbx" }
+                ] },
+                new AtlasEngine.ItemBlockVariant { Subvariants = [
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = esplanade + "T_BayEsplanadeDeadend8\\BayEsplanadeDeadend8A.Macroblock.Gbx" }
+                ] },
+                new AtlasEngine.ItemBlockVariant { Subvariants = [
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = esplanade + "O_BayEsplanadeDeadend12\\BayEsplanadeDeadend12A.Macroblock.Gbx" }
+                ] },
+                new AtlasEngine.ItemBlockVariant { Subvariants = [
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = esplanade + "Y_BayEsplanadeCorner\\BayEsplanadeCornerA.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = esplanade + "Y_BayEsplanadeCorner\\BayEsplanadeCornerB.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = esplanade + "Y_BayEsplanadeCorner\\BayEsplanadeCornerC.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = esplanade + "Y_BayEsplanadeCorner\\BayEsplanadeCornerD.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = esplanade + "Y_BayEsplanadeCorner\\BayEsplanadeCornerE.Macroblock.Gbx" }
+                ] },
+                new AtlasEngine.ItemBlockVariant { Subvariants = [
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = esplanade + "Q_BayEsplanadeCorner8\\BayEsplanadeCorner8A.Macroblock.Gbx" }
+                ] },
+                new AtlasEngine.ItemBlockVariant { Subvariants = [
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = esplanade + "R_BayEsplanadeStraight\\BayEsplanadeStraightA.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = esplanade + "R_BayEsplanadeStraight\\BayEsplanadeStraightB.Macroblock.Gbx" },
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = esplanade + "R_BayEsplanadeStraight\\BayEsplanadeStraightC.Macroblock.Gbx" }
+                ] },
+                new AtlasEngine.ItemBlockVariant { Subvariants = [
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = esplanade + "N_BayEsplanadeTShaped\\BayEsplanadeTShapedA.Macroblock.Gbx" }
+                ] },
+                new AtlasEngine.ItemBlockVariant { Subvariants = [
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = esplanade + "M_BayEsplanadeCross\\BayEsplanadeCross.Macroblock.Gbx" }
+                ] },
+                new AtlasEngine.ItemBlockVariant { Subvariants = [
+                    new AtlasEngine.ItemBlockSubvariant { MacroblockName = bayBase + "BayHarborBase.Macroblock.Gbx" }
+                ] }
+            ]
+        ]);
+        atlas.SetItemBlockGroundPlacement("BayEsplanade", 0, "BayDocks", 14);
+        atlas.SetFreeformFillerHeight("BayEsplanade", 4);
+        atlas.SetGroundSelectionDisplay("BayEsplanade", 1, 4);
+
         // These example names are for Lagoon. Water modes require valid block names.
         atlas.SetRemoveWaterBlockMapping(new Dictionary<string, string>
         {
@@ -107,13 +191,14 @@ public class AtlasMapType : CMapType, IContext
             new List<string> { "LagoonGrassVoid", "LagoonBeachVoid" }, "LagoonVoid");
 
         atlas.Initialize();
+        atlas.SetGroundSelectionGroup(selectedGroundGroup);
         atlas.SetSelectionChangeEventsEnabled(false);
         atlas.SetSelectionMode(AtlasEngine.SelectionMode.Ground2D);
         atlas.SetFreeformPlacementMode(AtlasEngine.FreeformPlacementMode.SelectionOnly);
         ManialinkText = """
             <manialink version="3">
               <frame pos="91 76">
-                                <quad pos="0 0" z-index="0" size="65 85" bgcolor="1112" />
+                                <quad pos="0 0" z-index="0" size="65 98" bgcolor="1112" />
                 <label pos="3 -2" z-index="2" size="59 5" text="ATLAS TOOLS" textsize="2" textcolor="fff" />
                 <label pos="3 -8" z-index="2" size="59 4" text="Select a mode, then drag in the map" textsize="1" textcolor="ccc" />
 
@@ -145,7 +230,12 @@ public class AtlasMapType : CMapType, IContext
                 <quad pos="3 -66" z-index="1" size="59 8" bgcolor="2860" />
                 <label id="AtlasConnections" pos="4 -67" z-index="2" size="57 6" text="Connections: Selection only" textsize="2" textcolor="fff" scriptevents="1" />
 
-                <label id="AtlasStatus" pos="3 -78" z-index="2" size="59 5" text="Mode: Ground docks" textsize="1" textcolor="ccc" />
+                <quad pos="3 -76" z-index="1" size="28 8" bgcolor="4a80" />
+                <label id="AtlasEsplanade" pos="4 -77" z-index="2" size="26 6" text="Esplanade" textsize="2" textcolor="fff" scriptevents="1" />
+                <quad pos="34 -76" z-index="1" size="28 8" bgcolor="a640" />
+                <label id="AtlasRemoveEsplanade" pos="35 -77" z-index="2" size="26 6" text="Remove esplanade" textsize="2" textcolor="fff" scriptevents="1" />
+
+                <label id="AtlasStatus" pos="3 -90" z-index="2" size="59 5" text="Mode: Ground docks" textsize="1" textcolor="ccc" />
               </frame>
               <script><!--
                 main() {
@@ -155,7 +245,7 @@ public class AtlasMapType : CMapType, IContext
                   declare Boolean WasPointerOverPanel = False;
                   while (True) {
                     yield;
-                    declare Boolean PointerOverPanel = MouseX >= 91. && MouseX <= 156. && MouseY <= 76. && MouseY >= -9.;
+                    declare Boolean PointerOverPanel = MouseX >= 91. && MouseX <= 156. && MouseY <= 76. && MouseY >= -22.;
                     if (PointerOverPanel != WasPointerOverPanel) {
                       if (PointerOverPanel) SendCustomEvent("AtlasPanelHover", ["1"]);
                       else SendCustomEvent("AtlasPanelHover", ["0"]);
@@ -164,12 +254,14 @@ public class AtlasMapType : CMapType, IContext
                     foreach (Event in PendingEvents) {
                       if (Event.Type != CMlScriptEvent::Type::MouseClick) continue;
                       if (Event.ControlId == "AtlasGround") Status.Value = "Mode: Ground docks";
+                      else if (Event.ControlId == "AtlasEsplanade") Status.Value = "Mode: Esplanade";
                       else if (Event.ControlId == "AtlasPlane") Status.Value = "Mode: 2D plane";
                       else if (Event.ControlId == "AtlasBox") Status.Value = "Mode: 3D box";
                       else if (Event.ControlId == "AtlasLine") Status.Value = "Mode: Line";
                       else if (Event.ControlId == "AtlasRemoveWater") Status.Value = "Mode: Remove water";
                       else if (Event.ControlId == "AtlasRestoreWater") Status.Value = "Mode: Restore water";
                       else if (Event.ControlId == "AtlasRemoveDocks") Status.Value = "Mode: Remove docks";
+                      else if (Event.ControlId == "AtlasRemoveEsplanade") Status.Value = "Mode: Remove esplanade";
                       else if (Event.ControlId == "AtlasNone") Status.Value = "Mode: No selection";
                                             else if (Event.ControlId == "AtlasConnections") {
                                                 ConnectExisting = !ConnectExisting;
@@ -183,7 +275,7 @@ public class AtlasMapType : CMapType, IContext
               --></script>
             </manialink>
             """;
-        Log("Atlas BayDocks ready: drag on the ground to place docks.");
+        Log("Atlas BayDocks and BayEsplanade ready: select a group and drag on its support.");
     }
 
     public void Loop()
@@ -203,13 +295,29 @@ public class AtlasMapType : CMapType, IContext
 
             panelClicked = true;
             var action = evt.CustomEventData[0];
-            if (action == "AtlasGround") atlas.SetSelectionMode(AtlasEngine.SelectionMode.Ground2D);
+            if (action == "AtlasGround")
+            {
+                selectedGroundGroup = "BayDocks";
+                atlas.SetGroundSelectionGroup(selectedGroundGroup);
+                atlas.SetSelectionMode(AtlasEngine.SelectionMode.Ground2D);
+            }
+            else if (action == "AtlasEsplanade")
+            {
+                selectedGroundGroup = "BayEsplanade";
+                atlas.SetGroundSelectionGroup(selectedGroundGroup);
+                atlas.SetSelectionMode(AtlasEngine.SelectionMode.Ground2D);
+            }
             else if (action == "AtlasPlane") atlas.SetSelectionMode(AtlasEngine.SelectionMode.Plane2D);
             else if (action == "AtlasBox") atlas.SetSelectionMode(AtlasEngine.SelectionMode.Box3D);
             else if (action == "AtlasLine") atlas.SetSelectionMode(AtlasEngine.SelectionMode.Line1D);
             else if (action == "AtlasRemoveWater") atlas.SetSelectionMode(AtlasEngine.SelectionMode.RemoveWater);
             else if (action == "AtlasRestoreWater") atlas.SetSelectionMode(AtlasEngine.SelectionMode.RestoreWater);
-            else if (action == "AtlasRemoveDocks") atlas.SetSelectionMode(AtlasEngine.SelectionMode.RemoveItemGroup);
+            else if (action == "AtlasRemoveDocks" || action == "AtlasRemoveEsplanade")
+            {
+                selectedGroundGroup = action == "AtlasRemoveDocks" ? "BayDocks" : "BayEsplanade";
+                atlas.SetGroundSelectionGroup(selectedGroundGroup);
+                atlas.SetSelectionMode(AtlasEngine.SelectionMode.RemoveItemGroup);
+            }
             else if (action == "AtlasNone") atlas.SetSelectionMode(AtlasEngine.SelectionMode.None);
             else if (action == "AtlasConnections")
             {
@@ -236,13 +344,13 @@ public class AtlasMapType : CMapType, IContext
         {
             if (atlas.Mode == AtlasEngine.SelectionMode.Ground2D)
             {
-                if (!atlas.PlaceFreeform1x1(change.Coords, "BayDocks"))
-                    Log("BayDocks placement failed.");
+                if (!atlas.PlaceFreeform1x1(change.Coords, selectedGroundGroup))
+                    Log($"{selectedGroundGroup} placement failed.");
             }
             else if (atlas.Mode == AtlasEngine.SelectionMode.RemoveItemGroup)
             {
-                if (!atlas.RemoveFreeform1x1(change.Coords, "BayDocks"))
-                    Log("BayDocks removal failed.");
+                if (!atlas.RemoveFreeform1x1(change.Coords, selectedGroundGroup))
+                    Log($"{selectedGroundGroup} removal failed.");
             }
             else if (atlas.Mode != AtlasEngine.SelectionMode.RemoveWater &&
                      atlas.Mode != AtlasEngine.SelectionMode.RestoreWater)

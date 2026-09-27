@@ -3,20 +3,35 @@
 #Include "Libs/AtlasEngine.Script.txt" as Atlas
 
 declare Boolean G_PanelHovered;
+declare Text G_SelectedGroundGroup;
 
-declare Dock = "Lagoon\\Z_Bay\\Z_BayDock\\Z_BayDock\\";
-declare BayBase = "Lagoon\\Z_Bay\\Z_BayDock\\A_BayBase\\";
-Atlas::SetNoItemBlockName(BayBase ^ "BaySeaBase.Macroblock.Gbx");
-Atlas::SetItemBlockGroup("BayDocks", [[], [Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "X_BayDocksBase1\\BayDockBase1A.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "X_BayDocksBase1\\BayDockBase1B.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "X_BayDocksBase1\\BayDockBase1C.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "X_BayDocksBase1\\BayDockBase1D.Macroblock.Gbx" }], DirectionOffset = 3 }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "V_BayDocksBase3\\BayDockBase3A.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "V_BayDocksBase3\\BayDockBase3B.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "V_BayDocksBase3\\BayDockBase3C.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "V_BayDocksBase3\\BayDockBase3D.Macroblock.Gbx" }] }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "W_BayDocksBase5\\BayDockBase5A.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "W_BayDocksBase5\\BayDockBase5B.Macroblock.Gbx" }] }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "S_BayDocksBase7\\BayDockBase7A.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "S_BayDocksBase7\\BayDockBase7B.Macroblock.Gbx" }], DirectionOffset = 2 }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "P_BayDocksBase15\\BayDockBase15A.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "P_BayDocksBase15\\BayDockBase15B.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "P_BayDocksBase15\\BayDockBase15C.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "P_BayDocksBase15\\BayDockBase15D.Macroblock.Gbx" }] }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "Z_BayDocksDeadend\\BayDockDeadendA.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "Z_BayDocksDeadend\\BayDockDeadendB.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "Z_BayDocksDeadend\\BayDockDeadendC.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "Z_BayDocksDeadend\\BayDockDeadendD.Macroblock.Gbx" }] }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "U_BayDocksDeadend4\\BayDockDeadend4A.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "U_BayDocksDeadend4\\BayDockDeadend4B.Macroblock.Gbx" }], DirectionOffset = 2 }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "T_BayDocksDeadend8\\BayDockDeadend8A.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "T_BayDocksDeadend8\\BayDockDeadend8B.Macroblock.Gbx" }] }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "O_BayDocksDeadend12\\BayDockDeadend12A.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "O_BayDocksDeadend12\\BayDockDeadend12B.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "O_BayDocksDeadend12\\BayDockDeadend12C.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "O_BayDocksDeadend12\\BayDockDeadend12D.Macroblock.Gbx" }] }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "Y_BayDocksCorner\\BayDockCornerA.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "Y_BayDocksCorner\\BayDockCornerB.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "Y_BayDocksCorner\\BayDockCornerC.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "Y_BayDocksCorner\\BayDockCornerD.Macroblock.Gbx" }] }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "Q_BayDocksCorner8\\BayDockCorner8A.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "Q_BayDocksCorner8\\BayDockCorner8B.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "Q_BayDocksCorner8\\BayDockCorner8C.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "Q_BayDocksCorner8\\BayDockCorner8D.Macroblock.Gbx" }] }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "R_BayDocksStraight\\BayDockStraightA.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "R_BayDocksStraight\\BayDockStraightB.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "R_BayDocksStraight\\BayDockStraightC.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "R_BayDocksStraight\\BayDockStraightD.Macroblock.Gbx" }] }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "N_BayDocksTShaped\\BayDockTShapedA.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "N_BayDocksTShaped\\BayDockTShapedB.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "N_BayDocksTShaped\\BayDockTShapedC.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "N_BayDocksTShaped\\BayDockTShapedD.Macroblock.Gbx" }] }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "M_BayDocksCross\\BayDockCross.Macroblock.Gbx" }] }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = BayBase ^ "BayHarborBase.Macroblock.Gbx" }] }]]);
-Atlas::SetRemoveWaterBlockMapping(["LagoonVoid" => "Beach", "Land" => "LagoonGrassVoid", "Beach" => "LagoonBeachVoid"]);
-Atlas::SetRestoreWaterBlockMapping(["LagoonGrassVoid", "LagoonBeachVoid"], "LagoonVoid");
-Atlas::Initialize();
-Atlas::SetSelectionChangeEventsEnabled(False);
-Atlas::SetSelectionMode(Atlas::C_SelectionMode_Ground2D);
-Atlas::SetFreeformPlacementMode(Atlas::C_FreeformPlacementMode_SelectionOnly);
-ManialinkText = """<manialink version="3">
+Void Private_Kek() {
+}
+
+main() {
+  G_SelectedGroundGroup = "BayDocks";
+
+  declare Dock = "Lagoon\\Z_Bay\\Z_BayDock\\Z_BayDock\\";
+  declare Esplanade = "Lagoon\\Z_Bay\\Z_BayDock\\Y_BayEsplanade\\";
+  declare BayBase = "Lagoon\\Z_Bay\\Z_BayDock\\A_BayBase\\";
+  Atlas::SetNoItemBlockName(BayBase ^ "BaySeaBase.Macroblock.Gbx");
+  Atlas::SetBaseGroundGroup("BaySea");
+  Atlas::SetItemBlockGroup("BayDocks", [[], [Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "X_BayDocksBase1\\BayDockBase1A.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "X_BayDocksBase1\\BayDockBase1B.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "X_BayDocksBase1\\BayDockBase1C.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "X_BayDocksBase1\\BayDockBase1D.Macroblock.Gbx" }], DirectionOffset = 3 }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "V_BayDocksBase3\\BayDockBase3A.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "V_BayDocksBase3\\BayDockBase3B.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "V_BayDocksBase3\\BayDockBase3C.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "V_BayDocksBase3\\BayDockBase3D.Macroblock.Gbx" }] }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "W_BayDocksBase5\\BayDockBase5A.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "W_BayDocksBase5\\BayDockBase5B.Macroblock.Gbx" }] }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "S_BayDocksBase7\\BayDockBase7A.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "S_BayDocksBase7\\BayDockBase7B.Macroblock.Gbx" }], DirectionOffset = 2 }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "P_BayDocksBase15\\BayDockBase15A.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "P_BayDocksBase15\\BayDockBase15B.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "P_BayDocksBase15\\BayDockBase15C.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "P_BayDocksBase15\\BayDockBase15D.Macroblock.Gbx" }] }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "Z_BayDocksDeadend\\BayDockDeadendA.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "Z_BayDocksDeadend\\BayDockDeadendB.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "Z_BayDocksDeadend\\BayDockDeadendC.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "Z_BayDocksDeadend\\BayDockDeadendD.Macroblock.Gbx" }] }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "U_BayDocksDeadend4\\BayDockDeadend4A.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "U_BayDocksDeadend4\\BayDockDeadend4B.Macroblock.Gbx" }], DirectionOffset = 2 }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "T_BayDocksDeadend8\\BayDockDeadend8A.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "T_BayDocksDeadend8\\BayDockDeadend8B.Macroblock.Gbx" }] }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "O_BayDocksDeadend12\\BayDockDeadend12A.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "O_BayDocksDeadend12\\BayDockDeadend12B.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "O_BayDocksDeadend12\\BayDockDeadend12C.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "O_BayDocksDeadend12\\BayDockDeadend12D.Macroblock.Gbx" }] }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "Y_BayDocksCorner\\BayDockCornerA.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "Y_BayDocksCorner\\BayDockCornerB.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "Y_BayDocksCorner\\BayDockCornerC.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "Y_BayDocksCorner\\BayDockCornerD.Macroblock.Gbx" }] }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "Q_BayDocksCorner8\\BayDockCorner8A.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "Q_BayDocksCorner8\\BayDockCorner8B.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "Q_BayDocksCorner8\\BayDockCorner8C.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "Q_BayDocksCorner8\\BayDockCorner8D.Macroblock.Gbx" }] }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "R_BayDocksStraight\\BayDockStraightA.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "R_BayDocksStraight\\BayDockStraightB.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "R_BayDocksStraight\\BayDockStraightC.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "R_BayDocksStraight\\BayDockStraightD.Macroblock.Gbx" }] }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "N_BayDocksTShaped\\BayDockTShapedA.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "N_BayDocksTShaped\\BayDockTShapedB.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "N_BayDocksTShaped\\BayDockTShapedC.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "N_BayDocksTShaped\\BayDockTShapedD.Macroblock.Gbx" }] }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Dock ^ "M_BayDocksCross\\BayDockCross.Macroblock.Gbx" }] }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = BayBase ^ "BayHarborBase.Macroblock.Gbx" }] }]]);
+  Atlas::SetItemBlockGroundPlacement("BayDocks", 0, "BaySea", -1);
+  Atlas::SetItemBlockGroup("BayEsplanade", [[], [Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Esplanade ^ "X_BayEsplanadeBase1\\BayEsplanadeBase1A.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Esplanade ^ "X_BayEsplanadeBase1\\BayEsplanadeBase1B.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Esplanade ^ "X_BayEsplanadeBase1\\BayEsplanadeBase1C.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Esplanade ^ "X_BayEsplanadeBase1\\BayEsplanadeBase1D.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Esplanade ^ "X_BayEsplanadeBase1\\BayEsplanadeBase1E.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Esplanade ^ "X_BayEsplanadeBase1\\BayEsplanadeBase1F.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Esplanade ^ "X_BayEsplanadeBase1\\BayEsplanadeBase1G.Macroblock.Gbx" }], DirectionOffset = 3 }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Esplanade ^ "V_BayEsplanadeBase3\\BayEsplanadeBase3A.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Esplanade ^ "V_BayEsplanadeBase3\\BayEsplanadeBase3B.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Esplanade ^ "V_BayEsplanadeBase3\\BayEsplanadeBase3C.Macroblock.Gbx" }] }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Esplanade ^ "W_BayEsplanadeBase5\\BayEsplanadeBase5A.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Esplanade ^ "W_BayEsplanadeBase5\\BayEsplanadeBase5B.Macroblock.Gbx" }], DirectionOffset = 1 }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Esplanade ^ "S_BayEsplanadeBase7\\BayEsplanadeBase7A.Macroblock.Gbx" }] }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Esplanade ^ "P_BayEsplanadeBase15\\BayEsplanadeBase15A.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Esplanade ^ "P_BayEsplanadeBase15\\BayEsplanadeBase15B.Macroblock.Gbx" }] }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Esplanade ^ "Z_BayEsplanadeDeadend\\BayEsplanadeDeadendA.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Esplanade ^ "Z_BayEsplanadeDeadend\\BayEsplanadeDeadendB.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Esplanade ^ "Z_BayEsplanadeDeadend\\BayEsplanadeDeadendC.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Esplanade ^ "Z_BayEsplanadeDeadend\\BayEsplanadeDeadendD.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Esplanade ^ "Z_BayEsplanadeDeadend\\BayEsplanadeDeadendE.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Esplanade ^ "Z_BayEsplanadeDeadend\\BayEsplanadeDeadendF.Macroblock.Gbx" }] }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Esplanade ^ "U_BayEsplanadeDeadend4\\BayEsplanadeDeadend4A.Macroblock.Gbx" }] }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Esplanade ^ "T_BayEsplanadeDeadend8\\BayEsplanadeDeadend8A.Macroblock.Gbx" }] }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Esplanade ^ "O_BayEsplanadeDeadend12\\BayEsplanadeDeadend12A.Macroblock.Gbx" }] }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Esplanade ^ "Y_BayEsplanadeCorner\\BayEsplanadeCornerA.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Esplanade ^ "Y_BayEsplanadeCorner\\BayEsplanadeCornerB.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Esplanade ^ "Y_BayEsplanadeCorner\\BayEsplanadeCornerC.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Esplanade ^ "Y_BayEsplanadeCorner\\BayEsplanadeCornerD.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Esplanade ^ "Y_BayEsplanadeCorner\\BayEsplanadeCornerE.Macroblock.Gbx" }] }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Esplanade ^ "Q_BayEsplanadeCorner8\\BayEsplanadeCorner8A.Macroblock.Gbx" }] }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Esplanade ^ "R_BayEsplanadeStraight\\BayEsplanadeStraightA.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Esplanade ^ "R_BayEsplanadeStraight\\BayEsplanadeStraightB.Macroblock.Gbx" }, Atlas::ItemBlockSubvariant { MacroblockName = Esplanade ^ "R_BayEsplanadeStraight\\BayEsplanadeStraightC.Macroblock.Gbx" }] }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Esplanade ^ "N_BayEsplanadeTShaped\\BayEsplanadeTShapedA.Macroblock.Gbx" }] }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = Esplanade ^ "M_BayEsplanadeCross\\BayEsplanadeCross.Macroblock.Gbx" }] }, Atlas::ItemBlockVariant { Subvariants = [Atlas::ItemBlockSubvariant { MacroblockName = BayBase ^ "BayHarborBase.Macroblock.Gbx" }] }]]);
+  Atlas::SetItemBlockGroundPlacement("BayEsplanade", 0, "BayDocks", 14);
+  Atlas::SetFreeformFillerHeight("BayEsplanade", 4);
+  Atlas::SetGroundSelectionDisplay("BayEsplanade", 1, 4);
+  Atlas::SetRemoveWaterBlockMapping(["LagoonVoid" => "Beach", "Land" => "LagoonGrassVoid", "Beach" => "LagoonBeachVoid"]);
+  Atlas::SetRestoreWaterBlockMapping(["LagoonGrassVoid", "LagoonBeachVoid"], "LagoonVoid");
+  Atlas::Initialize();
+  Atlas::SetGroundSelectionGroup(G_SelectedGroundGroup);
+  Atlas::SetSelectionChangeEventsEnabled(False);
+  Atlas::SetSelectionMode(Atlas::C_SelectionMode_Ground2D);
+  Atlas::SetFreeformPlacementMode(Atlas::C_FreeformPlacementMode_SelectionOnly);
+  ManialinkText = """<manialink version="3">
   <frame pos="91 76">
-                    <quad pos="0 0" z-index="0" size="65 85" bgcolor="1112" />
+                    <quad pos="0 0" z-index="0" size="65 98" bgcolor="1112" />
     <label pos="3 -2" z-index="2" size="59 5" text="ATLAS TOOLS" textsize="2" textcolor="fff" />
     <label pos="3 -8" z-index="2" size="59 4" text="Select a mode, then drag in the map" textsize="1" textcolor="ccc" />
 
@@ -48,7 +63,12 @@ ManialinkText = """<manialink version="3">
     <quad pos="3 -66" z-index="1" size="59 8" bgcolor="2860" />
     <label id="AtlasConnections" pos="4 -67" z-index="2" size="57 6" text="Connections: Selection only" textsize="2" textcolor="fff" scriptevents="1" />
 
-    <label id="AtlasStatus" pos="3 -78" z-index="2" size="59 5" text="Mode: Ground docks" textsize="1" textcolor="ccc" />
+    <quad pos="3 -76" z-index="1" size="28 8" bgcolor="4a80" />
+    <label id="AtlasEsplanade" pos="4 -77" z-index="2" size="26 6" text="Esplanade" textsize="2" textcolor="fff" scriptevents="1" />
+    <quad pos="34 -76" z-index="1" size="28 8" bgcolor="a640" />
+    <label id="AtlasRemoveEsplanade" pos="35 -77" z-index="2" size="26 6" text="Remove esplanade" textsize="2" textcolor="fff" scriptevents="1" />
+
+    <label id="AtlasStatus" pos="3 -90" z-index="2" size="59 5" text="Mode: Ground docks" textsize="1" textcolor="ccc" />
   </frame>
   <script><!--
     main() {
@@ -58,7 +78,7 @@ ManialinkText = """<manialink version="3">
       declare Boolean WasPointerOverPanel = False;
       while (True) {
         yield;
-        declare Boolean PointerOverPanel = MouseX >= 91. && MouseX <= 156. && MouseY <= 76. && MouseY >= -9.;
+        declare Boolean PointerOverPanel = MouseX >= 91. && MouseX <= 156. && MouseY <= 76. && MouseY >= -22.;
         if (PointerOverPanel != WasPointerOverPanel) {
           if (PointerOverPanel) SendCustomEvent("AtlasPanelHover", ["1"]);
           else SendCustomEvent("AtlasPanelHover", ["0"]);
@@ -67,12 +87,14 @@ ManialinkText = """<manialink version="3">
         foreach (Event in PendingEvents) {
           if (Event.Type != CMlScriptEvent::Type::MouseClick) continue;
           if (Event.ControlId == "AtlasGround") Status.Value = "Mode: Ground docks";
+          else if (Event.ControlId == "AtlasEsplanade") Status.Value = "Mode: Esplanade";
           else if (Event.ControlId == "AtlasPlane") Status.Value = "Mode: 2D plane";
           else if (Event.ControlId == "AtlasBox") Status.Value = "Mode: 3D box";
           else if (Event.ControlId == "AtlasLine") Status.Value = "Mode: Line";
           else if (Event.ControlId == "AtlasRemoveWater") Status.Value = "Mode: Remove water";
           else if (Event.ControlId == "AtlasRestoreWater") Status.Value = "Mode: Restore water";
           else if (Event.ControlId == "AtlasRemoveDocks") Status.Value = "Mode: Remove docks";
+          else if (Event.ControlId == "AtlasRemoveEsplanade") Status.Value = "Mode: Remove esplanade";
           else if (Event.ControlId == "AtlasNone") Status.Value = "Mode: No selection";
                                 else if (Event.ControlId == "AtlasConnections") {
                                     ConnectExisting = !ConnectExisting;
@@ -85,61 +107,74 @@ ManialinkText = """<manialink version="3">
     }
   --></script>
 </manialink>""";
-log("Atlas BayDocks ready: drag on the ground to place docks.");
-while (True) {
-  yield;
-  declare PanelClicked = False;
-  foreach (Evt in PendingEvents) {
-    if (Evt.Type != CMapEditorPluginEvent::Type::LayerCustomEvent || Evt.CustomEventData.count == 0) {
-      continue;
-    }
-    if (Evt.CustomEventType == "AtlasPanelHover") {
-      G_PanelHovered = Evt.CustomEventData[0] == "1";
-      continue;
-    }
-    if (Evt.CustomEventType != "AtlasPanel") {
-      continue;
-    }
-    PanelClicked = True;
-    declare Action = Evt.CustomEventData[0];
-    if (Action == "AtlasGround") {
-      Atlas::SetSelectionMode(Atlas::C_SelectionMode_Ground2D);
-    } else if (Action == "AtlasPlane") {
-      Atlas::SetSelectionMode(Atlas::C_SelectionMode_Plane2D);
-    } else {
-      if (Action == "AtlasBox") {
-        Atlas::SetSelectionMode(Atlas::C_SelectionMode_Box3D);
-      } else if (Action == "AtlasLine") {
-        Atlas::SetSelectionMode(Atlas::C_SelectionMode_Line1D);
+  log("Atlas BayDocks and BayEsplanade ready: select a group and drag on its support.");
+  while (True) {
+    yield;
+    declare PanelClicked = False;
+    foreach (Evt in PendingEvents) {
+      if (Evt.Type != CMapEditorPluginEvent::Type::LayerCustomEvent || Evt.CustomEventData.count == 0) {
+        continue;
+      }
+      if (Evt.CustomEventType == "AtlasPanelHover") {
+        G_PanelHovered = Evt.CustomEventData[0] == "1";
+        continue;
+      }
+      if (Evt.CustomEventType != "AtlasPanel") {
+        continue;
+      }
+      PanelClicked = True;
+      declare Action = Evt.CustomEventData[0];
+      if (Action == "AtlasGround") {
+        G_SelectedGroundGroup = "BayDocks";
+        Atlas::SetGroundSelectionGroup(G_SelectedGroundGroup);
+        Atlas::SetSelectionMode(Atlas::C_SelectionMode_Ground2D);
+      } else if (Action == "AtlasEsplanade") {
+        G_SelectedGroundGroup = "BayEsplanade";
+        Atlas::SetGroundSelectionGroup(G_SelectedGroundGroup);
+        Atlas::SetSelectionMode(Atlas::C_SelectionMode_Ground2D);
       } else {
-        if (Action == "AtlasRemoveWater") {
-          Atlas::SetSelectionMode(Atlas::C_SelectionMode_RemoveWater);
-        } else if (Action == "AtlasRestoreWater") {
-          Atlas::SetSelectionMode(Atlas::C_SelectionMode_RestoreWater);
+        if (Action == "AtlasPlane") {
+          Atlas::SetSelectionMode(Atlas::C_SelectionMode_Plane2D);
+        } else if (Action == "AtlasBox") {
+          Atlas::SetSelectionMode(Atlas::C_SelectionMode_Box3D);
         } else {
-          if (Action == "AtlasRemoveDocks") {
-            Atlas::SetSelectionMode(Atlas::C_SelectionMode_RemoveItemGroup);
-          } else if (Action == "AtlasNone") {
-            Atlas::SetSelectionMode(Atlas::C_SelectionMode_None);
+          if (Action == "AtlasLine") {
+            Atlas::SetSelectionMode(Atlas::C_SelectionMode_Line1D);
+          } else if (Action == "AtlasRemoveWater") {
+            Atlas::SetSelectionMode(Atlas::C_SelectionMode_RemoveWater);
           } else {
-            if (Action == "AtlasConnections") {
-              if (Atlas::GetFreeformMode() == Atlas::C_FreeformPlacementMode_ConnectExisting) {
-                Atlas::SetFreeformPlacementMode(Atlas::C_FreeformPlacementMode_SelectionOnly);
+            if (Action == "AtlasRestoreWater") {
+              Atlas::SetSelectionMode(Atlas::C_SelectionMode_RestoreWater);
+            } else if (Action == "AtlasRemoveDocks" || Action == "AtlasRemoveEsplanade") {
+              if (Action == "AtlasRemoveDocks") {
+                G_SelectedGroundGroup = "BayDocks";
               } else {
-                Atlas::SetFreeformPlacementMode(Atlas::C_FreeformPlacementMode_ConnectExisting);
+                G_SelectedGroundGroup = "BayEsplanade";
               }
-            } else if (Action == "AtlasUndo") {
-              if (!Atlas::GetCanUndoAtlasEdit()) {
-                log("No item edit to undo.");
-              } else if (!Atlas::UndoAtlasEdit()) {
-                log("Atlas undo failed.");
-              }
+              Atlas::SetGroundSelectionGroup(G_SelectedGroundGroup);
+              Atlas::SetSelectionMode(Atlas::C_SelectionMode_RemoveItemGroup);
             } else {
-              if (Action == "AtlasRedo") {
-                if (!Atlas::GetCanRedoAtlasEdit()) {
-                  log("No item edit to redo.");
-                } else if (!Atlas::RedoAtlasEdit()) {
-                  log("Atlas redo failed.");
+              if (Action == "AtlasNone") {
+                Atlas::SetSelectionMode(Atlas::C_SelectionMode_None);
+              } else if (Action == "AtlasConnections") {
+                if (Atlas::GetFreeformMode() == Atlas::C_FreeformPlacementMode_ConnectExisting) {
+                  Atlas::SetFreeformPlacementMode(Atlas::C_FreeformPlacementMode_SelectionOnly);
+                } else {
+                  Atlas::SetFreeformPlacementMode(Atlas::C_FreeformPlacementMode_ConnectExisting);
+                }
+              } else {
+                if (Action == "AtlasUndo") {
+                  if (!Atlas::GetCanUndoAtlasEdit()) {
+                    log("No item edit to undo.");
+                  } else if (!Atlas::UndoAtlasEdit()) {
+                    log("Atlas undo failed.");
+                  }
+                } else if (Action == "AtlasRedo") {
+                  if (!Atlas::GetCanRedoAtlasEdit()) {
+                    log("No item edit to redo.");
+                  } else if (!Atlas::RedoAtlasEdit()) {
+                    log("Atlas redo failed.");
+                  }
                 }
               }
             }
@@ -147,25 +182,25 @@ while (True) {
         }
       }
     }
-  }
-  Atlas::SetSelectionInputEnabled(!G_PanelHovered && !PanelClicked);
-  Atlas::Update();
-  foreach (Change in Atlas::GetSelectionConfirmed()) {
-    if (Atlas::GetMode() == Atlas::C_SelectionMode_Ground2D) {
-      if (!Atlas::PlaceFreeform1x1(Change.Coords, "BayDocks")) {
-        log("BayDocks placement failed.");
-      }
-    } else if (Atlas::GetMode() == Atlas::C_SelectionMode_RemoveItemGroup) {
-      if (!Atlas::RemoveFreeform1x1(Change.Coords, "BayDocks")) {
-        log("BayDocks removal failed.");
-      }
-    } else {
-      if (Atlas::GetMode() != Atlas::C_SelectionMode_RemoveWater && Atlas::GetMode() != Atlas::C_SelectionMode_RestoreWater) {
-        Atlas::SetCurrentSelection(Change.Coords, True);
+    Atlas::SetSelectionInputEnabled(!G_PanelHovered && !PanelClicked);
+    Atlas::Update();
+    foreach (Change in Atlas::GetSelectionConfirmed()) {
+      if (Atlas::GetMode() == Atlas::C_SelectionMode_Ground2D) {
+        if (!Atlas::PlaceFreeform1x1(Change.Coords, G_SelectedGroundGroup)) {
+          log(G_SelectedGroundGroup ^ " placement failed.");
+        }
+      } else if (Atlas::GetMode() == Atlas::C_SelectionMode_RemoveItemGroup) {
+        if (!Atlas::RemoveFreeform1x1(Change.Coords, G_SelectedGroundGroup)) {
+          log(G_SelectedGroundGroup ^ " removal failed.");
+        }
+      } else {
+        if (Atlas::GetMode() != Atlas::C_SelectionMode_RemoveWater && Atlas::GetMode() != Atlas::C_SelectionMode_RestoreWater) {
+          Atlas::SetCurrentSelection(Change.Coords, True);
+        }
       }
     }
-  }
-  foreach (Removal in Atlas::GetItemRemovals()) {
-    log("Item removed at " ^ Removal.Position);
+    foreach (Removal in Atlas::GetItemRemovals()) {
+      log("Item removed at " ^ Removal.Position);
+    }
   }
 }

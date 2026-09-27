@@ -54,6 +54,9 @@ public class AtlasEngine : CMapEditorPlugin, ILib
     public struct Placement
     {
         public Int3 Coord;
+        /// <summary>Old cell removed atomically when a freeform piece changes height.</summary>
+        public bool HasReplacementCoord;
+        public Int3 ReplacementCoord;
         public string MacroblockName;
         public CardinalDirections Direction;
         public bool Ground;
@@ -135,6 +138,14 @@ public class AtlasEngine : CMapEditorPlugin, ILib
     private string waterVoidName = "";
     private string noItemBlockName = "";
     private readonly Dictionary<string, List<List<ItemBlockVariant>>> itemBlockGroups = [];
+    private readonly Dictionary<string, int> itemBlockSelectionHeights = [];
+    private readonly Dictionary<string, string> itemBlockSupports = [];
+    private readonly Dictionary<string, int> itemBlockSupportPieces = [];
+    private readonly Dictionary<string, int> groundCursorOffsets = [];
+    private readonly Dictionary<string, int> groundPreviewHeights = [];
+    private readonly Dictionary<string, int> freeformFillerHeights = [];
+    private string baseGroundGroup = "";
+    private string groundSelectionGroup = "";
     private readonly Dictionary<string, Dictionary<int, int>> cubePieceMapping = [];
     private readonly Dictionary<Int3, int> groundItemHeights = [];
     private readonly Dictionary<Int3, int> removedWaterGroundHeights = [];
@@ -462,6 +473,160 @@ public class AtlasEngine : CMapEditorPlugin, ILib
 
     public void SetItemBlockGroup(string family, List<List<ItemBlockVariant>> variants) => itemBlockGroups[family] = variants;
 
+    /// <summary>Name the untracked group represented by the map's base ground.</summary>
+    public void SetBaseGroundGroup(string family) => baseGroundGroup = family;
+
+    /// <summary>Set the placement height above the supporting group and the required support.</summary>
+    public void SetItemBlockGroundPlacement(string family, int selectionHeight, string allowedOnGroup,
+        int allowedSupportPiece)
+    {
+        itemBlockSelectionHeights[family] = selectionHeight;
+        itemBlockSupports[family] = allowedOnGroup;
+        itemBlockSupportPieces[family] = allowedSupportPiece;
+    }
+
+    /// <summary>Configure the editor cursor and preview independently of placement height.</summary>
+    public void SetGroundSelectionDisplay(string family, int cursorOffset, int previewHeight)
+    {
+        groundCursorOffsets[family] = Math.Max(0, cursorOffset);
+        groundPreviewHeights[family] = Math.Max(1, previewHeight);
+    }
+
+    /// <summary>Raise the freeform interior filler above the piece it replaces.</summary>
+    public void SetFreeformFillerHeight(string family, int height)
+    {
+        freeformFillerHeights[family] = Math.Max(0, height);
+    }
+
+    private int FreeformFillerHeight(string family, int piece)
+    {
+        if (piece == 14 && freeformFillerHeights.ContainsKey(family))
+            return freeformFillerHeights[family];
+        return 0;
+    }
+
+    private bool IsRaisedFreeformFiller(ItemBlock block, string family) =>
+        block.Family == family && block.PieceIndex == 14 && FreeformFillerHeight(family, 14) > 0;
+
+    private bool IsAllowedSupport(ItemBlock block, string family) =>
+        itemBlockSupports.ContainsKey(family) && block.Ground &&
+        block.Family == itemBlockSupports[family] &&
+        (itemBlockSupportPieces[family] < 0 || block.PieceIndex == itemBlockSupportPieces[family]);
+
+    private bool CanReplaceSupport(ItemBlock block, string family, Int3 coord) =>
+        IsAllowedSupport(block, family) && itemBlockSelectionHeights[family] == 0 &&
+        block.Width == 1 && block.Depth == 1 && SameCoord(block.MacroblockCoord, coord);
+
+    public void SetGroundSelectionGroup(string family)
+    {
+        if (groundSelectionGroup == family) return;
+        groundSelectionGroup = family;
+        ResetSelectionChangeTracking();
+        ClearSelection();
+    }
+
+    private int GetGroupGroundHeight(int x, int z, string family)
+    {
+        if (!itemBlockSupports.ContainsKey(family)) return GetFakeGroundHeight(x, z);
+        var support = itemBlockSupports[family];
+        var height = -1;
+        if (support == baseGroundGroup)
+        {
+            // The base group is untracked; removed-water metadata retains
+            // its original ground height when the terrain has changed.
+            GetFakeGroundHeight(x, z);
+            var cell = new Int3(x, 0, z);
+            height = removedWaterGroundHeights.ContainsKey(cell)
+                ? removedWaterGroundHeights[cell] : GetGroundHeight(x, z);
+        }
+        else
+        {
+            // Once a support piece is replaced, the new family remains selectable.
+            var ownHeight = -1;
+            foreach (var block in GetItemBlockList())
+                if (block.Ground && block.Family == family &&
+                    x >= block.MacroblockCoord.X && x < block.MacroblockCoord.X + Math.Max(1, block.Width) &&
+                    z >= block.MacroblockCoord.Z && z < block.MacroblockCoord.Z + Math.Max(1, block.Depth) &&
+                    block.MacroblockCoord.Y > ownHeight)
+                    ownHeight = block.MacroblockCoord.Y;
+            if (ownHeight >= 0) return ownHeight;
+            foreach (var block in GetItemBlockList())
+                if (IsAllowedSupport(block, family) &&
+                    x >= block.MacroblockCoord.X && x < block.MacroblockCoord.X + Math.Max(1, block.Width) &&
+                    z >= block.MacroblockCoord.Z && z < block.MacroblockCoord.Z + Math.Max(1, block.Depth) &&
+                    block.MacroblockCoord.Y > height)
+                    height = block.MacroblockCoord.Y;
+        }
+        if (height < 0)
+        {
+            return -1;
+        }
+
+        return height + itemBlockSelectionHeights[family];
+    }
+
+    private bool HasAllowedGroundSupport(Int3 coord, string family)
+    {
+        if (!itemBlockSupports.ContainsKey(family)) return true;
+        if (coord.Y != GetGroupGroundHeight(coord.X, coord.Z, family)) return false;
+        if (itemBlockSupports[family] != baseGroundGroup)
+        {
+            foreach (var block in GetItemBlockList())
+                if (block.Ground && block.Family == family &&
+                    coord.X >= block.MacroblockCoord.X && coord.X < block.MacroblockCoord.X + Math.Max(1, block.Width) &&
+                    coord.Z >= block.MacroblockCoord.Z && coord.Z < block.MacroblockCoord.Z + Math.Max(1, block.Depth) &&
+                    coord.Y == block.MacroblockCoord.Y) return true;
+            foreach (var block in GetItemBlockList())
+                if (IsAllowedSupport(block, family) &&
+                    coord.X >= block.MacroblockCoord.X && coord.X < block.MacroblockCoord.X + Math.Max(1, block.Width) &&
+                    coord.Z >= block.MacroblockCoord.Z && coord.Z < block.MacroblockCoord.Z + Math.Max(1, block.Depth) &&
+                    coord.Y == block.MacroblockCoord.Y + itemBlockSelectionHeights[family]) return true;
+            return false;
+        }
+        // A base-ground group cannot be started on another tracked ground family.
+        foreach (var block in GetItemBlockList())
+            if (block.Ground && block.Family != family &&
+                coord.X >= block.MacroblockCoord.X && coord.X < block.MacroblockCoord.X + Math.Max(1, block.Width) &&
+                coord.Z >= block.MacroblockCoord.Z && coord.Z < block.MacroblockCoord.Z + Math.Max(1, block.Depth) &&
+                block.MacroblockCoord.Y >= coord.Y) return false;
+        return true;
+    }
+
+    private Int3 GetMouseCoordForGroundGroup(string family)
+    {
+        var offset = groundCursorOffsets[family];
+        var previousY = Math.Max(0, Math.Min(Map.Size.Y - 1, Cursor.Coord.Y));
+        var candidateHeights = new Dictionary<int, bool> { [previousY] = true };
+        var groundMouse = GetMouseCoordOnGround();
+        var baseY = GetGroupGroundHeight(groundMouse.X, groundMouse.Z, family);
+        if (baseY >= 0 && baseY + offset < Map.Size.Y)
+            candidateHeights[baseY + offset] = true;
+        foreach (var block in GetItemBlockList())
+        {
+            var placementY = -1;
+            if (block.Ground && block.Family == family) placementY = block.MacroblockCoord.Y;
+            else if (IsAllowedSupport(block, family))
+                placementY = block.MacroblockCoord.Y + itemBlockSelectionHeights[family];
+            if (placementY >= 0 && placementY + offset < Map.Size.Y)
+                candidateHeights[placementY + offset] = true;
+        }
+
+        var bestY = -1;
+        var bestCoord = new Int3(groundMouse.X, 0, groundMouse.Z);
+        foreach (var displayY in candidateHeights.Keys)
+        {
+            var hit = GetMouseCoordAtHeight(displayY);
+            if (!WithinMap(hit)) continue;
+            var placementY = GetGroupGroundHeight(hit.X, hit.Z, family);
+            if (placementY < 0 || placementY + offset != displayY || displayY <= bestY) continue;
+            bestY = displayY;
+            bestCoord = new Int3(hit.X, placementY, hit.Z);
+        }
+        if (bestY >= 0) return bestCoord;
+        var fallback = GetMouseCoordAtHeight(previousY);
+        return new Int3(fallback.X, Math.Max(0, previousY - offset), fallback.Z);
+    }
+
     public void SetFreeformPlacementMode(FreeformPlacementMode mode) => freeformPlacementMode = mode;
 
     public void SetLayeredItemBlockGroup(string family, List<List<ItemBlockVariant>> bottom,
@@ -640,8 +805,28 @@ public class AtlasEngine : CMapEditorPlugin, ILib
     {
         CustomSelectionCoords.Clear();
         if (!selectionVisible) { HideCustomSelection(); return; }
-        foreach (var coord in currentSelection) CustomSelectionCoords.Add(coord);
+        AddSelectionVisualCoords(currentSelection);
         ShowCustomSelection();
+    }
+
+    private void AddSelectionVisualCoords(IList<Int3> coords)
+    {
+        var shown = new Dictionary<Int3, bool>();
+        var offset = 0;
+        var height = 1;
+        if (mode == SelectionMode.Ground2D && groundCursorOffsets.ContainsKey(groundSelectionGroup))
+        {
+            offset = groundCursorOffsets[groundSelectionGroup];
+            height = groundPreviewHeights[groundSelectionGroup];
+        }
+        foreach (var coord in coords)
+            for (var layer = 0; layer < height; layer++)
+            {
+                var visual = new Int3(coord.X, coord.Y + offset + layer, coord.Z);
+                if (visual.Y >= Map.Size.Y || shown.ContainsKey(visual)) continue;
+                CustomSelectionCoords.Add(visual);
+                shown[visual] = true;
+            }
     }
 
     public void Initialize()
@@ -669,17 +854,35 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         if (mode == SelectionMode.Ground2D || mode == SelectionMode.RemoveItemGroup ||
             mode == SelectionMode.RemoveWater || mode == SelectionMode.RestoreWater)
         {
-            cursorCoord = GetMouseCoordOnGround();
+            if ((mode == SelectionMode.Ground2D || mode == SelectionMode.RemoveItemGroup) &&
+                groundSelectionGroup != "" &&
+                groundCursorOffsets.ContainsKey(groundSelectionGroup) &&
+                groundCursorOffsets[groundSelectionGroup] > 0)
+                cursorCoord = GetMouseCoordForGroundGroup(groundSelectionGroup);
+            else
+            {
+                cursorCoord = GetMouseCoordOnGround();
+                if ((mode == SelectionMode.Ground2D || mode == SelectionMode.RemoveItemGroup) &&
+                    groundSelectionGroup != "")
+                {
+                    var groupHeight = GetGroupGroundHeight(cursorCoord.X, cursorCoord.Z,
+                        groundSelectionGroup);
+                    if (groupHeight >= 0)
+                        cursorCoord = new Int3(cursorCoord.X, groupHeight, cursorCoord.Z);
+                }
+            }
             if (mode == SelectionMode.RestoreWater)
                 cursorCoord = new Int3(cursorCoord.X, CollectionGroundY, cursorCoord.Z);
         }
 
-        // Keep the editor cursor on the same grid position used to build the preview.
-        // Ground-based modes resolve their placement from the mouse ray rather than
-        // the cursor's previous height, so without this the cursor and selection drift.
+        // Placement keeps the group's support Y; the visible cursor uses its display Y.
         var displayCursorCoord = cursorCoord;
         if (mode == SelectionMode.RemoveWater)
             displayCursorCoord = new Int3(cursorCoord.X, CollectionGroundY, cursorCoord.Z);
+        else if ((mode == SelectionMode.Ground2D || mode == SelectionMode.RemoveItemGroup) &&
+                 groundCursorOffsets.ContainsKey(groundSelectionGroup))
+            displayCursorCoord = new Int3(cursorCoord.X,
+                Math.Min(Map.Size.Y - 1, cursorCoord.Y + groundCursorOffsets[groundSelectionGroup]), cursorCoord.Z);
         Cursor.Coord = displayCursorCoord;
 
         if (mode != SelectionMode.None)
@@ -741,12 +944,11 @@ public class AtlasEngine : CMapEditorPlugin, ILib
     private void DrawPreview(IList<Int3> coords)
     {
         CustomSelectionCoords.Clear();
-        var shown = new Dictionary<Int3, bool>();
+        var combined = new List<Int3>();
         if (selectionVisible)
-            foreach (var coord in currentSelection)
-            { CustomSelectionCoords.Add(coord); shown[coord] = true; }
-        foreach (var coord in coords)
-            if (!shown.ContainsKey(coord)) CustomSelectionCoords.Add(coord);
+            foreach (var coord in currentSelection) combined.Add(coord);
+        foreach (var coord in coords) combined.Add(coord);
+        AddSelectionVisualCoords(combined);
         ShowCustomSelection();
     }
 
@@ -796,7 +998,10 @@ public class AtlasEngine : CMapEditorPlugin, ILib
                 selectionMode == SelectionMode.RestoreWater)
             {
                 var y = selectionMode == SelectionMode.Ground2D || selectionMode == SelectionMode.RemoveItemGroup
-                    ? GetFakeGroundHeight(x, z) : CollectionGroundY;
+                    ? groundSelectionGroup == "" ? GetFakeGroundHeight(x, z)
+                        : GetGroupGroundHeight(x, z, groundSelectionGroup)
+                    : CollectionGroundY;
+                if (y < 0) return new List<Int3>();
                 result.Add(new Int3(x, y, z));
             }
             else if (selectionMode == SelectionMode.Plane2D) result.Add(new Int3(x, start.Y, z));
@@ -1389,6 +1594,7 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         Metadata<List<ItemBlock>>.For(Map, out var storedBlocks, name: "Atlas_ItemBlocks");
         var existing = storedBlocks.Value!;
         var plannedCells = new Dictionary<Int3, bool>();
+        var replacementCells = new Dictionary<Int3, bool>();
         var minX = plan[0].Coord.X;
         var maxX = minX;
         var minY = plan[0].Coord.Y;
@@ -1406,6 +1612,17 @@ public class AtlasEngine : CMapEditorPlugin, ILib
             maxY = Math.Max(maxY, entry.Coord.Y);
             minZ = Math.Min(minZ, entry.Coord.Z);
             maxZ = Math.Max(maxZ, entry.Coord.Z + depth - 1);
+            if (entry.HasReplacementCoord)
+            {
+                if (width != 1 || depth != 1 || !WithinMap(entry.ReplacementCoord) ||
+                    entry.ReplacementCoord.X != entry.Coord.X ||
+                    entry.ReplacementCoord.Z != entry.Coord.Z ||
+                    entry.ReplacementCoord.Y == entry.Coord.Y ||
+                    replacementCells.ContainsKey(entry.ReplacementCoord)) return false;
+                replacementCells[entry.ReplacementCoord] = true;
+                minY = Math.Min(minY, entry.ReplacementCoord.Y);
+                maxY = Math.Max(maxY, entry.ReplacementCoord.Y);
+            }
             for (var x = entry.Coord.X; x < entry.Coord.X + width; x++)
             for (var z = entry.Coord.Z; z < entry.Coord.Z + depth; z++)
             {
@@ -1413,6 +1630,11 @@ public class AtlasEngine : CMapEditorPlugin, ILib
                 if (!WithinMap(cell) || plannedCells.ContainsKey(cell)) return false;
                 plannedCells[cell] = true;
             }
+        }
+        foreach (var cell in replacementCells.Keys)
+        {
+            if (plannedCells.ContainsKey(cell)) return false;
+            plannedCells[cell] = true;
         }
         var existingByCell = new Dictionary<Int3, List<int>>();
         for (var index = 0; index < existing.Count; index++)
@@ -1435,6 +1657,17 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         var removedIndices = new Dictionary<int, bool>();
         foreach (var entry in plan)
         {
+            if (entry.HasReplacementCoord)
+            {
+                if (!existingByCell.ContainsKey(entry.ReplacementCoord) ||
+                    existingByCell[entry.ReplacementCoord].Count != 1) return false;
+                var sourceIndex = existingByCell[entry.ReplacementCoord][0];
+                var source = existing[sourceIndex];
+                if (!source.Ground || source.Width != 1 || source.Depth != 1 ||
+                    (source.Family != entry.Family &&
+                     !CanReplaceSupport(source, entry.Family, entry.ReplacementCoord))) return false;
+                removedIndices[sourceIndex] = true;
+            }
             var width = Math.Max(1, entry.Width);
             var depth = Math.Max(1, entry.Depth);
             for (var x = entry.Coord.X; x < entry.Coord.X + width; x++)
@@ -1442,10 +1675,12 @@ public class AtlasEngine : CMapEditorPlugin, ILib
             {
                 var cell = new Int3(x, entry.Coord.Y, z);
                 if (!existingByCell.ContainsKey(cell)) continue;
+                if (entry.HasReplacementCoord) return false;
                 foreach (var index in existingByCell[cell])
                 {
                     var block = existing[index];
-                    if (block.Family != entry.Family) return false;
+                    if (block.Family != entry.Family &&
+                        !CanReplaceSupport(block, entry.Family, cell)) return false;
                     if (SamePlacement(block, entry))
                         continue;
                     removedIndices[index] = true;
@@ -2011,7 +2246,7 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         var selectedByCell = new Dictionary<Int3, Int3>();
         foreach (var coord in selection)
         {
-            if (!WithinMap(coord) || coord.Y != GetFakeGroundHeight(coord.X, coord.Z)) return new List<Placement>();
+            if (!WithinMap(coord) || !HasAllowedGroundSupport(coord, family)) return new List<Placement>();
             var cell = new Int3(coord.X, 0, coord.Z);
             if (selectedByCell.ContainsKey(cell)) return result;
             selectedByCell[cell] = coord;
@@ -2068,6 +2303,7 @@ public class AtlasEngine : CMapEditorPlugin, ILib
             if (freeformPlacementMode == FreeformPlacementMode.SelectionOnly) continue;
             if (old.Family != family || oldCoord.X < minX - 2 || oldCoord.X > maxX + 2 ||
                 oldCoord.Z < minZ - 2 || oldCoord.Z > maxZ + 2) continue;
+            if (IsRaisedFreeformFiller(old, family)) continue;
             var nearby = false;
             var touchesSelection = false;
             for (var dx = -2; dx <= 2; dx++)
@@ -2092,15 +2328,23 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         {
             var hasOld = oldByCoord.ContainsKey(coord);
             var oldBlock = hasOld ? oldByCoord[coord] : new ItemBlock { MacroblockName = "" };
-            if (hasOld && (oldBlock.Family != family || duplicateCoords.ContainsKey(coord)))
+            if (hasOld && duplicateCoords.ContainsKey(coord))
                 return new List<Placement>();
+            if (hasOld && oldBlock.Family != family)
+            {
+                if (!CanReplaceSupport(oldBlock, family, coord)) return new List<Placement>();
+                hasOld = false;
+            }
+            if (hasOld && IsRaisedFreeformFiller(oldBlock, family))
+                hasOld = false;
             var oldLogicalDirection = CardinalDirections.North;
             if (hasOld) oldLogicalDirection = LogicalFreeformDirectionFor(oldBlock);
             var oldPiece = -1;
             if (hasOld) oldPiece = oldBlock.PieceIndex;
             var desired = ResolveFreeformCell(occupied, selectedLookup, coord,
                 oldPiece, oldLogicalDirection, hasFiller);
-            if (hasOld && oldBlock.PieceIndex == desired.Piece &&
+            var fillerHeight = FreeformFillerHeight(family, desired.Piece);
+            if (hasOld && fillerHeight == 0 && oldBlock.PieceIndex == desired.Piece &&
                 oldLogicalDirection == desired.Direction)
             {
                 result.Add(new Placement { Coord = coord, MacroblockName = oldBlock.MacroblockName,
@@ -2110,7 +2354,11 @@ public class AtlasEngine : CMapEditorPlugin, ILib
             }
             var variant = VariantFor(family, desired.Piece, true, coord);
             if (variant.MacroblockName == "") return new List<Placement>();
-            result.Add(new Placement { Coord = coord, MacroblockName = variant.MacroblockName,
+            var placedAt = new Int3(coord.X, coord.Y + fillerHeight, coord.Z);
+            if (!WithinMap(placedAt)) return new List<Placement>();
+            result.Add(new Placement { Coord = placedAt,
+                HasReplacementCoord = fillerHeight > 0,
+                ReplacementCoord = coord, MacroblockName = variant.MacroblockName,
                 Direction = OffsetDirection(desired.Direction,
                     variant.DirectionOffset + FreeformModelDirectionOffset(desired.Piece)),
                 Ground = true, Family = family, PieceIndex = desired.Piece, Width = 1, Depth = 1 });
@@ -2120,6 +2368,21 @@ public class AtlasEngine : CMapEditorPlugin, ILib
 
     public bool PlaceFreeform1x1(IList<Int3> selection, string family) =>
         ExecutePlacementPlan(ResolveFreeform1x1(selection, family));
+
+    private int GetRemovalSupportHeight(int x, int z, string support)
+    {
+        var column = new Int3(x, 0, z);
+        var height = -1;
+        if (itemBlockSupports.ContainsKey(support) && itemBlockSupports[support] == baseGroundGroup)
+        {
+            GetFakeGroundHeight(x, z);
+            height = removedWaterGroundHeights.ContainsKey(column)
+                ? removedWaterGroundHeights[column] : GetGroundHeight(x, z);
+            if (height >= 0) height += itemBlockSelectionHeights[support];
+        }
+        else height = GetGroupGroundHeight(x, z, support);
+        return height;
+    }
 
     /// <summary>Remove selected ground pieces from a freeform 1x1 group and resolve its exposed edges.</summary>
     public bool RemoveFreeform1x1(IList<Int3> selection, string family)
@@ -2134,12 +2397,52 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         var existing = GetItemBlockList();
         var toRemove = new List<ItemBlock>();
         var removedCoords = new Dictionary<Int3, bool>();
+        var removedShapeCoords = new Dictionary<Int3, bool>();
+        var hasDependents = false;
+        foreach (var supportRule in itemBlockSupports)
+            if (supportRule.Value == family) hasDependents = true;
+        var supportHeights = new Dictionary<Int3, int>();
+        if (itemBlockSupports.ContainsKey(family))
+        {
+            var supportFamily = itemBlockSupports[family];
+            foreach (var supportBlock in existing)
+            {
+                if (!supportBlock.Ground || supportBlock.Family != supportFamily) continue;
+                for (var x = supportBlock.MacroblockCoord.X;
+                     x < supportBlock.MacroblockCoord.X + Math.Max(1, supportBlock.Width); x++)
+                for (var z = supportBlock.MacroblockCoord.Z;
+                     z < supportBlock.MacroblockCoord.Z + Math.Max(1, supportBlock.Depth); z++)
+                {
+                    var column = new Int3(x, 0, z);
+                    if (!supportHeights.ContainsKey(column) ||
+                        supportHeights[column] < supportBlock.MacroblockCoord.Y)
+                        supportHeights[column] = supportBlock.MacroblockCoord.Y;
+                }
+            }
+        }
         foreach (var block in existing)
         {
             if (!selected.ContainsKey(block.MacroblockCoord) || block.Family != family) continue;
             if (!block.Ground || block.Width != 1 || block.Depth != 1) return false;
+            // A supported group must be removed before its supporting piece.
+            if (hasDependents)
+                foreach (var dependent in existing)
+                    if (itemBlockSupports.ContainsKey(dependent.Family) &&
+                        itemBlockSupports[dependent.Family] == family && dependent.Ground &&
+                        block.MacroblockCoord.X >= dependent.MacroblockCoord.X &&
+                        block.MacroblockCoord.X < dependent.MacroblockCoord.X + Math.Max(1, dependent.Width) &&
+                        block.MacroblockCoord.Z >= dependent.MacroblockCoord.Z &&
+                        block.MacroblockCoord.Z < dependent.MacroblockCoord.Z + Math.Max(1, dependent.Depth) &&
+                        dependent.MacroblockCoord.Y == block.MacroblockCoord.Y +
+                            itemBlockSelectionHeights[dependent.Family]) return false;
             toRemove.Add(block);
             removedCoords[block.MacroblockCoord] = true;
+            if (IsRaisedFreeformFiller(block, family))
+                removedShapeCoords[new Int3(block.MacroblockCoord.X,
+                    block.MacroblockCoord.Y - FreeformFillerHeight(family, 14),
+                    block.MacroblockCoord.Z)] = true;
+            else
+                removedShapeCoords[block.MacroblockCoord] = true;
         }
         if (toRemove.Count == 0) return false;
 
@@ -2157,20 +2460,56 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         var sideMasks = new Dictionary<Int3, int>();
         var diagonalMasks = new Dictionary<Int3, int>();
         var neighbors = new List<ItemBlock>();
+        var raisedFillerHeight = FreeformFillerHeight(family, 14);
+        if (raisedFillerHeight > 0 && itemBlockSupports.ContainsKey(family))
+            foreach (var block in existing)
+            {
+                if (block.Family != family || !block.Ground || block.Width != 1 || block.Depth != 1 ||
+                    block.MacroblockCoord.X < minX - 2 || block.MacroblockCoord.X > maxX + 2 ||
+                    block.MacroblockCoord.Z < minZ - 2 || block.MacroblockCoord.Z > maxZ + 2) continue;
+                var column = new Int3(block.MacroblockCoord.X, 0, block.MacroblockCoord.Z);
+                var baseY = supportHeights.ContainsKey(column) ? supportHeights[column] :
+                    GetRemovalSupportHeight(block.MacroblockCoord.X, block.MacroblockCoord.Z,
+                        itemBlockSupports[family]);
+                var virtualY = block.MacroblockCoord.Y - raisedFillerHeight;
+                var firstVirtual = true;
+                while (virtualY >= baseY && virtualY >= 0)
+                {
+                    // Removing a raised filler exposes its immediate lower cell.
+                    // Other upper pieces restore a filler, so lower layers remain filled.
+                    if (!firstVirtual || !removedCoords.ContainsKey(block.MacroblockCoord) ||
+                        !IsRaisedFreeformFiller(block, family))
+                    {
+                        var virtualCoord = new Int3(block.MacroblockCoord.X, virtualY,
+                            block.MacroblockCoord.Z);
+                        sideMasks[virtualCoord] = 15;
+                        diagonalMasks[virtualCoord] = 15;
+                    }
+                    firstVirtual = false;
+                    virtualY -= raisedFillerHeight;
+                }
+            }
         foreach (var block in existing)
         {
             if (block.Family != family || !block.Ground || block.Width != 1 || block.Depth != 1 ||
                 removedCoords.ContainsKey(block.MacroblockCoord)) continue;
-            var coord = block.MacroblockCoord;
+            var isRaisedFiller = IsRaisedFreeformFiller(block, family);
+            var coord = isRaisedFiller
+                ? new Int3(block.MacroblockCoord.X,
+                    block.MacroblockCoord.Y - raisedFillerHeight, block.MacroblockCoord.Z)
+                : block.MacroblockCoord;
             if (coord.X < minX - 2 || coord.X > maxX + 2 ||
                 coord.Z < minZ - 2 || coord.Z > maxZ + 2) continue;
-            var logicalDirection = LogicalFreeformDirectionFor(block);
-            sideMasks[coord] = FreeformSideMask(block.PieceIndex, logicalDirection);
-            diagonalMasks[coord] = FreeformDiagonalMask(block.PieceIndex, logicalDirection);
+            if (!isRaisedFiller)
+            {
+                var logicalDirection = LogicalFreeformDirectionFor(block);
+                sideMasks[coord] = FreeformSideMask(block.PieceIndex, logicalDirection);
+                diagonalMasks[coord] = FreeformDiagonalMask(block.PieceIndex, logicalDirection);
+            }
             var touchesRemoval = false;
             for (var dx = -1; dx <= 1; dx++)
             for (var dz = -1; dz <= 1; dz++)
-                if (removedCoords.ContainsKey(new Int3(coord.X + dx, coord.Y, coord.Z + dz)))
+                if (removedShapeCoords.ContainsKey(new Int3(coord.X + dx, coord.Y, coord.Z + dz)))
                     touchesRemoval = true;
             if (touchesRemoval) neighbors.Add(block);
         }
@@ -2178,17 +2517,71 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         var plan = new List<Placement>();
         foreach (var block in neighbors)
         {
-            var coord = block.MacroblockCoord;
-            var desired = ResolveFreeformRemovalCell(sideMasks, diagonalMasks, removedCoords, coord,
+            var coord = IsRaisedFreeformFiller(block, family)
+                ? new Int3(block.MacroblockCoord.X,
+                    block.MacroblockCoord.Y - raisedFillerHeight, block.MacroblockCoord.Z)
+                : block.MacroblockCoord;
+            var desired = ResolveFreeformRemovalCell(sideMasks, diagonalMasks, removedShapeCoords, coord,
                 block.PieceIndex, LogicalFreeformDirectionFor(block), hasFiller);
             if (block.PieceIndex == desired.Piece &&
                 LogicalFreeformDirectionFor(block) == desired.Direction) continue;
             var variant = VariantFor(family, desired.Piece, true, coord);
             if (variant.MacroblockName == "") return false;
-            plan.Add(new Placement { Coord = coord, MacroblockName = variant.MacroblockName,
+            var fillerHeight = FreeformFillerHeight(family, desired.Piece);
+            var placedAt = new Int3(coord.X, coord.Y + fillerHeight, coord.Z);
+            if (!WithinMap(placedAt)) return false;
+            var changesHeight = !SameCoord(placedAt, block.MacroblockCoord);
+            plan.Add(new Placement { Coord = placedAt,
+                HasReplacementCoord = changesHeight, ReplacementCoord = block.MacroblockCoord,
+                MacroblockName = variant.MacroblockName,
                 Direction = OffsetDirection(desired.Direction,
                     variant.DirectionOffset + FreeformModelDirectionOffset(desired.Piece)),
                 Ground = true, Family = family, PieceIndex = desired.Piece, Width = 1, Depth = 1 });
+        }
+        if (itemBlockSupports.ContainsKey(family) &&
+            itemBlockSupports[family] != baseGroundGroup &&
+            itemBlockSupportPieces[family] >= 0 && itemBlockSelectionHeights[family] == 0)
+        {
+            // Restore dock filler at the base, esplanade filler after an upper
+            // piece, or a lower filler after removing a raised interior cell.
+            var support = itemBlockSupports[family];
+            var piece = itemBlockSupportPieces[family];
+            foreach (var block in toRemove)
+            {
+                var replacementFamily = support;
+                var replacementPiece = piece;
+                var replacementCoord = block.MacroblockCoord;
+                var column = new Int3(block.MacroblockCoord.X, 0, block.MacroblockCoord.Z);
+                var baseHeight = supportHeights.ContainsKey(column) ? supportHeights[column] :
+                    GetRemovalSupportHeight(block.MacroblockCoord.X,
+                        block.MacroblockCoord.Z, support);
+                if (block.MacroblockCoord.Y > baseHeight)
+                {
+                    if (block.PieceIndex != 14)
+                    {
+                        replacementFamily = family;
+                        replacementPiece = 14;
+                    }
+                    else
+                    {
+                        replacementCoord = new Int3(replacementCoord.X,
+                            replacementCoord.Y - FreeformFillerHeight(family, 14),
+                            replacementCoord.Z);
+                        if (replacementCoord.Y > baseHeight)
+                        {
+                            replacementFamily = family;
+                            replacementPiece = 14;
+                        }
+                    }
+                }
+                var variant = VariantFor(replacementFamily, replacementPiece, true, replacementCoord);
+                if (variant.MacroblockName == "") return false;
+                plan.Add(new Placement { Coord = replacementCoord,
+                    MacroblockName = variant.MacroblockName,
+                    Direction = OffsetDirection(CardinalDirections.North, variant.DirectionOffset),
+                    Ground = true, Family = replacementFamily, PieceIndex = replacementPiece,
+                    Width = 1, Depth = 1 });
+            }
         }
         var baseMacroblock = noItemBlockName == "" ? null : GetMacroblockModelFromFilePath(noItemBlockName);
         var baseBlock = noItemBlockName == "" || baseMacroblock != null
@@ -2204,6 +2597,7 @@ public class AtlasEngine : CMapEditorPlugin, ILib
         foreach (var entry in plan)
         {
             affectedCells[entry.Coord] = true;
+            if (entry.HasReplacementCoord) affectedCells[entry.ReplacementCoord] = true;
             minX = Math.Min(minX, entry.Coord.X);
             maxX = Math.Max(maxX, entry.Coord.X);
             minZ = Math.Min(minZ, entry.Coord.Z);

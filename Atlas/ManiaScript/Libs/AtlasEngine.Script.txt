@@ -25,6 +25,8 @@
 
 #Struct Placement {
   Int3 Coord;
+  Boolean HasReplacementCoord;
+  Int3 ReplacementCoord;
   Text MacroblockName;
   CMapEditorPlugin::CardinalDirections Direction;
   Boolean Ground;
@@ -111,6 +113,14 @@ declare Text[] G_RestoreWaterVoidNames;
 declare Text G_WaterVoidName;
 declare Text G_NoItemBlockName;
 declare ItemBlockVariant[][][Text] G_ItemBlockGroups;
+declare Integer[Text] G_ItemBlockSelectionHeights;
+declare Text[Text] G_ItemBlockSupports;
+declare Integer[Text] G_ItemBlockSupportPieces;
+declare Integer[Text] G_GroundCursorOffsets;
+declare Integer[Text] G_GroundPreviewHeights;
+declare Integer[Text] G_FreeformFillerHeights;
+declare Text G_BaseGroundGroup;
+declare Text G_GroundSelectionGroup;
 declare Integer[Integer][Text] G_CubePieceMapping;
 declare Integer[Int3] G_GroundItemHeights;
 declare Integer[Int3] G_RemovedWaterGroundHeights;
@@ -377,6 +387,14 @@ Boolean Private_WithinMap(Int3 _Coord) {
   return _Coord.X >= 0 && _Coord.Z >= 0 && _Coord.Y >= 0 && _Coord.X < Map.Size.X && _Coord.Z < Map.Size.Z && _Coord.Y < Map.Size.Y;
 }
 
+Boolean Private_IsAllowedSupport(ItemBlock _Block, Text _Family) {
+  return G_ItemBlockSupports.existskey(_Family) && _Block.Ground && _Block.Family == G_ItemBlockSupports[_Family] && (G_ItemBlockSupportPieces[_Family] < 0 || _Block.PieceIndex == G_ItemBlockSupportPieces[_Family]);
+}
+
+Boolean Private_CanReplaceSupport(ItemBlock _Block, Text _Family, Int3 _Coord) {
+  return Private_IsAllowedSupport(_Block, _Family) && G_ItemBlockSelectionHeights[_Family] == 0 && _Block.Width == 1 && _Block.Depth == 1 && Private_SameCoord(_Block.MacroblockCoord, _Coord);
+}
+
 NoItemRemoval Private_RemoveNoItemBlocks(Int3 _Coord, Integer _Width, Integer _Depth, Boolean _Ground) {
   declare NoItemReplacement[] Removed;
   if (!_Ground || G_NoItemBlockName == "") {
@@ -468,6 +486,7 @@ Boolean ExecutePlacementPlan(Placement[] _Plan) {
   declare metadata ItemBlock[] Atlas_ItemBlocks as StoredBlocks for Map;
   declare Existing = StoredBlocks/* not Null here */;
   declare Boolean[Int3] PlannedCells;
+  declare Boolean[Int3] ReplacementCells;
   declare MinX = _Plan[0].Coord.X;
   declare MaxX = MinX;
   declare MinY = _Plan[0].Coord.Y;
@@ -486,6 +505,14 @@ Boolean ExecutePlacementPlan(Placement[] _Plan) {
     MaxY = MathLib::Max(MaxY, Entry.Coord.Y);
     MinZ = MathLib::Min(MinZ, Entry.Coord.Z);
     MaxZ = MathLib::Max(MaxZ, Entry.Coord.Z + Depth - 1);
+    if (Entry.HasReplacementCoord) {
+      if (Width != 1 || Depth != 1 || !Private_WithinMap(Entry.ReplacementCoord) || Entry.ReplacementCoord.X != Entry.Coord.X || Entry.ReplacementCoord.Z != Entry.Coord.Z || Entry.ReplacementCoord.Y == Entry.Coord.Y || ReplacementCells.existskey(Entry.ReplacementCoord)) {
+        return False;
+      }
+      ReplacementCells[Entry.ReplacementCoord] = True;
+      MinY = MathLib::Min(MinY, Entry.ReplacementCoord.Y);
+      MaxY = MathLib::Max(MaxY, Entry.ReplacementCoord.Y);
+    }
     for (X, Entry.Coord.X, Entry.Coord.X + Width - 1) {
       for (Z, Entry.Coord.Z, Entry.Coord.Z + Depth - 1) {
         declare Cell = <X, Entry.Coord.Y, Z>;
@@ -495,6 +522,12 @@ Boolean ExecutePlacementPlan(Placement[] _Plan) {
         PlannedCells[Cell] = True;
       }
     }
+  }
+  foreach (Cell => CellValue in ReplacementCells) {
+    if (PlannedCells.existskey(Cell)) {
+      return False;
+    }
+    PlannedCells[Cell] = True;
   }
   declare Integer[][Int3] ExistingByCell;
   for (Index, 0, Existing.count - 1) {
@@ -517,6 +550,17 @@ Boolean ExecutePlacementPlan(Placement[] _Plan) {
   }
   declare Boolean[Integer] RemovedIndices;
   foreach (Entry in _Plan) {
+    if (Entry.HasReplacementCoord) {
+      if (!ExistingByCell.existskey(Entry.ReplacementCoord) || ExistingByCell[Entry.ReplacementCoord].count != 1) {
+        return False;
+      }
+      declare SourceIndex = ExistingByCell[Entry.ReplacementCoord][0];
+      declare Source = Existing[SourceIndex];
+      if (!Source.Ground || Source.Width != 1 || Source.Depth != 1 || (Source.Family != Entry.Family && !Private_CanReplaceSupport(Source, Entry.Family, Entry.ReplacementCoord))) {
+        return False;
+      }
+      RemovedIndices[SourceIndex] = True;
+    }
     declare Width = MathLib::Max(1, Entry.Width);
     declare Depth = MathLib::Max(1, Entry.Depth);
     for (X, Entry.Coord.X, Entry.Coord.X + Width - 1) {
@@ -525,9 +569,12 @@ Boolean ExecutePlacementPlan(Placement[] _Plan) {
         if (!ExistingByCell.existskey(Cell)) {
           continue;
         }
+        if (Entry.HasReplacementCoord) {
+          return False;
+        }
         foreach (Index in ExistingByCell[Cell]) {
           declare Block = Existing[Index];
-          if (Block.Family != Entry.Family) {
+          if (Block.Family != Entry.Family && !Private_CanReplaceSupport(Block, Entry.Family, Cell)) {
             return False;
           }
           if (Private_SamePlacement(Block, Entry)) {
@@ -800,6 +847,195 @@ Void SetItemBlockGroup(Text _Family, ItemBlockVariant[][] _Variants) {
   G_ItemBlockGroups[_Family] = _Variants;
 }
 
+Void SetBaseGroundGroup(Text _Family) {
+  G_BaseGroundGroup = _Family;
+}
+
+Void SetItemBlockGroundPlacement(Text _Family, Integer _SelectionHeight, Text _AllowedOnGroup, Integer _AllowedSupportPiece) {
+  G_ItemBlockSelectionHeights[_Family] = _SelectionHeight;
+  G_ItemBlockSupports[_Family] = _AllowedOnGroup;
+  G_ItemBlockSupportPieces[_Family] = _AllowedSupportPiece;
+}
+
+Void SetGroundSelectionDisplay(Text _Family, Integer _CursorOffset, Integer _PreviewHeight) {
+  G_GroundCursorOffsets[_Family] = MathLib::Max(0, _CursorOffset);
+  G_GroundPreviewHeights[_Family] = MathLib::Max(1, _PreviewHeight);
+}
+
+Void SetFreeformFillerHeight(Text _Family, Integer _Height) {
+  G_FreeformFillerHeights[_Family] = MathLib::Max(0, _Height);
+}
+
+Integer Private_FreeformFillerHeight(Text _Family, Integer _Piece) {
+  if (_Piece == 14 && G_FreeformFillerHeights.existskey(_Family)) {
+    return G_FreeformFillerHeights[_Family];
+  }
+  return 0;
+}
+
+Boolean Private_IsRaisedFreeformFiller(ItemBlock _Block, Text _Family) {
+  return _Block.Family == _Family && _Block.PieceIndex == 14 && Private_FreeformFillerHeight(_Family, 14) > 0;
+}
+
+Void ClearSelection() {
+  G_CurrentSelection.clear();
+  G_SelectionVisible = False;
+  CustomSelectionCoords.clear();
+  HideCustomSelection();
+}
+
+Void SetGroundSelectionGroup(Text _Family) {
+  if (G_GroundSelectionGroup == _Family) {
+    return;
+  }
+  G_GroundSelectionGroup = _Family;
+  Private_ResetSelectionChangeTracking();
+  ClearSelection();
+}
+
+Integer GetFakeGroundHeight(Integer _X, Integer _Z) {
+  if (!G_GroundItemHeightsValid) {
+    G_GroundItemHeights.clear();
+    G_RemovedWaterGroundHeights.clear();
+    foreach (Coord in GetRemovedWater()) {
+      declare Cell = <Coord.X, 0, Coord.Z>;
+      if (!G_RemovedWaterGroundHeights.existskey(Cell) || Coord.Y < G_RemovedWaterGroundHeights[Cell]) {
+        G_RemovedWaterGroundHeights[Cell] = Coord.Y;
+      }
+    }
+    foreach (Block in GetItemBlockList()) {
+      if (!Block.Ground) {
+        continue;
+      }
+      for (CellX, Block.MacroblockCoord.X, Block.MacroblockCoord.X + MathLib::Max(1, Block.Width) - 1) {
+        for (CellZ, Block.MacroblockCoord.Z, Block.MacroblockCoord.Z + MathLib::Max(1, Block.Depth) - 1) {
+          declare Cell = <CellX, 0, CellZ>;
+          if (!G_GroundItemHeights.existskey(Cell) || G_GroundItemHeights[Cell] < Block.MacroblockCoord.Y) {
+            G_GroundItemHeights[Cell] = Block.MacroblockCoord.Y;
+          }
+        }
+      }
+    }
+    G_GroundItemHeightsValid = True;
+  }
+  declare Key = <_X, 0, _Z>;
+  declare Integer Height;
+  if (G_RemovedWaterGroundHeights.existskey(Key)) {
+    Height = G_RemovedWaterGroundHeights[Key];
+  } else {
+    Height = GetGroundHeight(_X, _Z);
+  }
+  if (G_GroundItemHeights.existskey(Key) && G_GroundItemHeights[Key] > Height) {
+    Height = G_GroundItemHeights[Key];
+  }
+  return Height;
+}
+
+Integer Private_GetGroupGroundHeight(Integer _X, Integer _Z, Text _Family) {
+  if (!G_ItemBlockSupports.existskey(_Family)) {
+    return GetFakeGroundHeight(_X, _Z);
+  }
+  declare Support = G_ItemBlockSupports[_Family];
+  declare Height = -1;
+  if (Support == G_BaseGroundGroup) {
+    GetFakeGroundHeight(_X, _Z);
+    declare Cell = <_X, 0, _Z>;
+    if (G_RemovedWaterGroundHeights.existskey(Cell)) {
+      Height = G_RemovedWaterGroundHeights[Cell];
+    } else {
+      Height = GetGroundHeight(_X, _Z);
+    }
+  } else {
+    declare OwnHeight = -1;
+    foreach (Block in GetItemBlockList()) {
+      if (Block.Ground && Block.Family == _Family && _X >= Block.MacroblockCoord.X && _X < Block.MacroblockCoord.X + MathLib::Max(1, Block.Width) && _Z >= Block.MacroblockCoord.Z && _Z < Block.MacroblockCoord.Z + MathLib::Max(1, Block.Depth) && Block.MacroblockCoord.Y > OwnHeight) {
+        OwnHeight = Block.MacroblockCoord.Y;
+      }
+    }
+    if (OwnHeight >= 0) {
+      return OwnHeight;
+    }
+    foreach (Block in GetItemBlockList()) {
+      if (Private_IsAllowedSupport(Block, _Family) && _X >= Block.MacroblockCoord.X && _X < Block.MacroblockCoord.X + MathLib::Max(1, Block.Width) && _Z >= Block.MacroblockCoord.Z && _Z < Block.MacroblockCoord.Z + MathLib::Max(1, Block.Depth) && Block.MacroblockCoord.Y > Height) {
+        Height = Block.MacroblockCoord.Y;
+      }
+    }
+  }
+  if (Height < 0) {
+    return -1;
+  }
+  return Height + G_ItemBlockSelectionHeights[_Family];
+}
+
+Boolean Private_HasAllowedGroundSupport(Int3 _Coord, Text _Family) {
+  if (!G_ItemBlockSupports.existskey(_Family)) {
+    return True;
+  }
+  if (_Coord.Y != Private_GetGroupGroundHeight(_Coord.X, _Coord.Z, _Family)) {
+    return False;
+  }
+  if (G_ItemBlockSupports[_Family] != G_BaseGroundGroup) {
+    foreach (Block in GetItemBlockList()) {
+      if (Block.Ground && Block.Family == _Family && _Coord.X >= Block.MacroblockCoord.X && _Coord.X < Block.MacroblockCoord.X + MathLib::Max(1, Block.Width) && _Coord.Z >= Block.MacroblockCoord.Z && _Coord.Z < Block.MacroblockCoord.Z + MathLib::Max(1, Block.Depth) && _Coord.Y == Block.MacroblockCoord.Y) {
+        return True;
+      }
+    }
+    foreach (Block in GetItemBlockList()) {
+      if (Private_IsAllowedSupport(Block, _Family) && _Coord.X >= Block.MacroblockCoord.X && _Coord.X < Block.MacroblockCoord.X + MathLib::Max(1, Block.Width) && _Coord.Z >= Block.MacroblockCoord.Z && _Coord.Z < Block.MacroblockCoord.Z + MathLib::Max(1, Block.Depth) && _Coord.Y == Block.MacroblockCoord.Y + G_ItemBlockSelectionHeights[_Family]) {
+        return True;
+      }
+    }
+    return False;
+  }
+  foreach (Block in GetItemBlockList()) {
+    if (Block.Ground && Block.Family != _Family && _Coord.X >= Block.MacroblockCoord.X && _Coord.X < Block.MacroblockCoord.X + MathLib::Max(1, Block.Width) && _Coord.Z >= Block.MacroblockCoord.Z && _Coord.Z < Block.MacroblockCoord.Z + MathLib::Max(1, Block.Depth) && Block.MacroblockCoord.Y >= _Coord.Y) {
+      return False;
+    }
+  }
+  return True;
+}
+
+Int3 Private_GetMouseCoordForGroundGroup(Text _Family) {
+  declare Offset = G_GroundCursorOffsets[_Family];
+  declare PreviousY = MathLib::Max(0, MathLib::Min(Map.Size.Y - 1, Cursor.Coord.Y));
+  declare CandidateHeights = [PreviousY => True];
+  declare GroundMouse = GetMouseCoordOnGround();
+  declare BaseY = Private_GetGroupGroundHeight(GroundMouse.X, GroundMouse.Z, _Family);
+  if (BaseY >= 0 && BaseY + Offset < Map.Size.Y) {
+    CandidateHeights[BaseY + Offset] = True;
+  }
+  foreach (Block in GetItemBlockList()) {
+    declare PlacementY = -1;
+    if (Block.Ground && Block.Family == _Family) {
+      PlacementY = Block.MacroblockCoord.Y;
+    } else if (Private_IsAllowedSupport(Block, _Family)) {
+      PlacementY = Block.MacroblockCoord.Y + G_ItemBlockSelectionHeights[_Family];
+    }
+    if (PlacementY >= 0 && PlacementY + Offset < Map.Size.Y) {
+      CandidateHeights[PlacementY + Offset] = True;
+    }
+  }
+  declare BestY = -1;
+  declare BestCoord = <GroundMouse.X, 0, GroundMouse.Z>;
+  foreach (DisplayY => DisplayYValue in CandidateHeights) {
+    declare Hit = GetMouseCoordAtHeight(DisplayY);
+    if (!Private_WithinMap(Hit)) {
+      continue;
+    }
+    declare PlacementY = Private_GetGroupGroundHeight(Hit.X, Hit.Z, _Family);
+    if (PlacementY < 0 || PlacementY + Offset != DisplayY || DisplayY <= BestY) {
+      continue;
+    }
+    BestY = DisplayY;
+    BestCoord = <Hit.X, PlacementY, Hit.Z>;
+  }
+  if (BestY >= 0) {
+    return BestCoord;
+  }
+  declare Fallback = GetMouseCoordAtHeight(PreviousY);
+  return <Fallback.X, MathLib::Max(0, PreviousY - Offset), Fallback.Z>;
+}
+
 Void SetFreeformPlacementMode(Integer _Mode) {
   G_FreeformPlacementMode = _Mode;
 }
@@ -853,42 +1089,24 @@ Integer GetRealGroundHeight(Integer _X, Integer _Z) {
   return GetGroundHeight(_X, _Z);
 }
 
-Integer GetFakeGroundHeight(Integer _X, Integer _Z) {
-  if (!G_GroundItemHeightsValid) {
-    G_GroundItemHeights.clear();
-    G_RemovedWaterGroundHeights.clear();
-    foreach (Coord in GetRemovedWater()) {
-      declare Cell = <Coord.X, 0, Coord.Z>;
-      if (!G_RemovedWaterGroundHeights.existskey(Cell) || Coord.Y < G_RemovedWaterGroundHeights[Cell]) {
-        G_RemovedWaterGroundHeights[Cell] = Coord.Y;
-      }
-    }
-    foreach (Block in GetItemBlockList()) {
-      if (!Block.Ground) {
+Void Private_AddSelectionVisualCoords(Int3[] _Coords) {
+  declare Boolean[Int3] Shown;
+  declare Offset = 0;
+  declare Height = 1;
+  if (G_Mode == C_SelectionMode_Ground2D && G_GroundCursorOffsets.existskey(G_GroundSelectionGroup)) {
+    Offset = G_GroundCursorOffsets[G_GroundSelectionGroup];
+    Height = G_GroundPreviewHeights[G_GroundSelectionGroup];
+  }
+  foreach (Coord in _Coords) {
+    for (Layer, 0, Height - 1) {
+      declare Visual = <Coord.X, Coord.Y + Offset + Layer, Coord.Z>;
+      if (Visual.Y >= Map.Size.Y || Shown.existskey(Visual)) {
         continue;
       }
-      for (CellX, Block.MacroblockCoord.X, Block.MacroblockCoord.X + MathLib::Max(1, Block.Width) - 1) {
-        for (CellZ, Block.MacroblockCoord.Z, Block.MacroblockCoord.Z + MathLib::Max(1, Block.Depth) - 1) {
-          declare Cell = <CellX, 0, CellZ>;
-          if (!G_GroundItemHeights.existskey(Cell) || G_GroundItemHeights[Cell] < Block.MacroblockCoord.Y) {
-            G_GroundItemHeights[Cell] = Block.MacroblockCoord.Y;
-          }
-        }
-      }
+      CustomSelectionCoords.add(Visual);
+      Shown[Visual] = True;
     }
-    G_GroundItemHeightsValid = True;
   }
-  declare Key = <_X, 0, _Z>;
-  declare Integer Height;
-  if (G_RemovedWaterGroundHeights.existskey(Key)) {
-    Height = G_RemovedWaterGroundHeights[Key];
-  } else {
-    Height = GetGroundHeight(_X, _Z);
-  }
-  if (G_GroundItemHeights.existskey(Key) && G_GroundItemHeights[Key] > Height) {
-    Height = G_GroundItemHeights[Key];
-  }
-  return Height;
 }
 
 Void Private_DrawSelection() {
@@ -897,9 +1115,7 @@ Void Private_DrawSelection() {
     HideCustomSelection();
     return;
   }
-  foreach (Coord in G_CurrentSelection) {
-    CustomSelectionCoords.add(Coord);
-  }
+  Private_AddSelectionVisualCoords(G_CurrentSelection);
   ShowCustomSelection();
 }
 
@@ -922,13 +1138,6 @@ Int3[] Private_GetWaterSelectionCoords(Int3[] _Coords) {
     Result.add(<Coord.X, CollectionGroundY, Coord.Z>);
   }
   return Result;
-}
-
-Void ClearSelection() {
-  G_CurrentSelection.clear();
-  G_SelectionVisible = False;
-  CustomSelectionCoords.clear();
-  HideCustomSelection();
 }
 
 Void SetSelectionMode(Integer _NextMode) {
@@ -1101,9 +1310,16 @@ Int3[] BuildSelection(Int3 _Start, Int3 _End, Integer _SelectionMode) {
       if (_SelectionMode == C_SelectionMode_Ground2D || _SelectionMode == C_SelectionMode_RemoveItemGroup || _SelectionMode == C_SelectionMode_RemoveWater || _SelectionMode == C_SelectionMode_RestoreWater) {
         declare Integer Y;
         if (_SelectionMode == C_SelectionMode_Ground2D || _SelectionMode == C_SelectionMode_RemoveItemGroup) {
-          Y = GetFakeGroundHeight(X, Z);
+          if (G_GroundSelectionGroup == "") {
+            Y = GetFakeGroundHeight(X, Z);
+          } else {
+            Y = Private_GetGroupGroundHeight(X, Z, G_GroundSelectionGroup);
+          }
         } else {
           Y = CollectionGroundY;
+        }
+        if (Y < 0) {
+          return [];
         }
         Result.add(<X, Y, Z>);
       } else if (_SelectionMode == C_SelectionMode_Plane2D) {
@@ -1134,18 +1350,16 @@ Int3[] BuildSelection(Int3 _Start, Int3 _End, Integer _SelectionMode) {
 
 Void Private_DrawPreview(Int3[] _Coords) {
   CustomSelectionCoords.clear();
-  declare Boolean[Int3] Shown;
+  declare Int3[] Combined;
   if (G_SelectionVisible) {
     foreach (Coord in G_CurrentSelection) {
-      CustomSelectionCoords.add(Coord);
-      Shown[Coord] = True;
+      Combined.add(Coord);
     }
   }
   foreach (Coord in _Coords) {
-    if (!Shown.existskey(Coord)) {
-      CustomSelectionCoords.add(Coord);
-    }
+    Combined.add(Coord);
   }
+  Private_AddSelectionVisualCoords(Combined);
   ShowCustomSelection();
 }
 
@@ -1322,7 +1536,17 @@ Void Update() {
   }
   declare CursorCoord = Cursor.Coord;
   if (G_Mode == C_SelectionMode_Ground2D || G_Mode == C_SelectionMode_RemoveItemGroup || G_Mode == C_SelectionMode_RemoveWater || G_Mode == C_SelectionMode_RestoreWater) {
-    CursorCoord = GetMouseCoordOnGround();
+    if ((G_Mode == C_SelectionMode_Ground2D || G_Mode == C_SelectionMode_RemoveItemGroup) && G_GroundSelectionGroup != "" && G_GroundCursorOffsets.existskey(G_GroundSelectionGroup) && G_GroundCursorOffsets[G_GroundSelectionGroup] > 0) {
+      CursorCoord = Private_GetMouseCoordForGroundGroup(G_GroundSelectionGroup);
+    } else {
+      CursorCoord = GetMouseCoordOnGround();
+      if ((G_Mode == C_SelectionMode_Ground2D || G_Mode == C_SelectionMode_RemoveItemGroup) && G_GroundSelectionGroup != "") {
+        declare GroupHeight = Private_GetGroupGroundHeight(CursorCoord.X, CursorCoord.Z, G_GroundSelectionGroup);
+        if (GroupHeight >= 0) {
+          CursorCoord = <CursorCoord.X, GroupHeight, CursorCoord.Z>;
+        }
+      }
+    }
     if (G_Mode == C_SelectionMode_RestoreWater) {
       CursorCoord = <CursorCoord.X, CollectionGroundY, CursorCoord.Z>;
     }
@@ -1330,6 +1554,8 @@ Void Update() {
   declare DisplayCursorCoord = CursorCoord;
   if (G_Mode == C_SelectionMode_RemoveWater) {
     DisplayCursorCoord = <CursorCoord.X, CollectionGroundY, CursorCoord.Z>;
+  } else if ((G_Mode == C_SelectionMode_Ground2D || G_Mode == C_SelectionMode_RemoveItemGroup) && G_GroundCursorOffsets.existskey(G_GroundSelectionGroup)) {
+    DisplayCursorCoord = <CursorCoord.X, MathLib::Min(Map.Size.Y - 1, CursorCoord.Y + G_GroundCursorOffsets[G_GroundSelectionGroup]), CursorCoord.Z>;
   }
   Cursor.Coord = DisplayCursorCoord;
   if (G_Mode != C_SelectionMode_None) {
@@ -2157,7 +2383,7 @@ Placement[] ResolveFreeform1x1(Int3[] _Selection, Text _Family) {
   declare Boolean[Int3] SelectedLookup;
   declare Int3[Int3] SelectedByCell;
   foreach (Coord in _Selection) {
-    if (!Private_WithinMap(Coord) || Coord.Y != GetFakeGroundHeight(Coord.X, Coord.Z)) {
+    if (!Private_WithinMap(Coord) || !Private_HasAllowedGroundSupport(Coord, _Family)) {
       return [];
     }
     declare Cell = <Coord.X, 0, Coord.Z>;
@@ -2221,6 +2447,9 @@ Placement[] ResolveFreeform1x1(Int3[] _Selection, Text _Family) {
     if (Old.Family != _Family || OldCoord.X < MinX - 2 || OldCoord.X > MaxX + 2 || OldCoord.Z < MinZ - 2 || OldCoord.Z > MaxZ + 2) {
       continue;
     }
+    if (Private_IsRaisedFreeformFiller(Old, _Family)) {
+      continue;
+    }
     declare Nearby = False;
     declare TouchesSelection = False;
     for (Dx, -2, 2) {
@@ -2257,8 +2486,17 @@ Placement[] ResolveFreeform1x1(Int3[] _Selection, Text _Family) {
     } else {
       OldBlock = ItemBlock { MacroblockName = "" };
     }
-    if (HasOld && (OldBlock.Family != _Family || DuplicateCoords.existskey(Coord))) {
+    if (HasOld && DuplicateCoords.existskey(Coord)) {
       return [];
+    }
+    if (HasOld && OldBlock.Family != _Family) {
+      if (!Private_CanReplaceSupport(OldBlock, _Family, Coord)) {
+        return [];
+      }
+      HasOld = False;
+    }
+    if (HasOld && Private_IsRaisedFreeformFiller(OldBlock, _Family)) {
+      HasOld = False;
     }
     declare OldLogicalDirection = CMapEditorPlugin::CardinalDirections::North;
     if (HasOld) {
@@ -2269,7 +2507,8 @@ Placement[] ResolveFreeform1x1(Int3[] _Selection, Text _Family) {
       OldPiece = OldBlock.PieceIndex;
     }
     declare Desired = ResolveFreeformCell(Occupied, SelectedLookup, Coord, OldPiece, OldLogicalDirection, HasFiller);
-    if (HasOld && OldBlock.PieceIndex == Desired.Piece && OldLogicalDirection == Desired.Direction) {
+    declare FillerHeight = Private_FreeformFillerHeight(_Family, Desired.Piece);
+    if (HasOld && FillerHeight == 0 && OldBlock.PieceIndex == Desired.Piece && OldLogicalDirection == Desired.Direction) {
       Result.add(Placement { Coord = Coord, MacroblockName = OldBlock.MacroblockName, Direction = DirectionFromIndex(OldBlock.MacroblockDir), Ground = True, Family = _Family, PieceIndex = OldBlock.PieceIndex, Width = 1, Depth = 1 });
       continue;
     }
@@ -2277,13 +2516,36 @@ Placement[] ResolveFreeform1x1(Int3[] _Selection, Text _Family) {
     if (Variant.MacroblockName == "") {
       return [];
     }
-    Result.add(Placement { Coord = Coord, MacroblockName = Variant.MacroblockName, Direction = Private_OffsetDirection(Desired.Direction, Variant.DirectionOffset + Private_FreeformModelDirectionOffset(Desired.Piece)), Ground = True, Family = _Family, PieceIndex = Desired.Piece, Width = 1, Depth = 1 });
+    declare PlacedAt = <Coord.X, Coord.Y + FillerHeight, Coord.Z>;
+    if (!Private_WithinMap(PlacedAt)) {
+      return [];
+    }
+    Result.add(Placement { Coord = PlacedAt, HasReplacementCoord = FillerHeight > 0, ReplacementCoord = Coord, MacroblockName = Variant.MacroblockName, Direction = Private_OffsetDirection(Desired.Direction, Variant.DirectionOffset + Private_FreeformModelDirectionOffset(Desired.Piece)), Ground = True, Family = _Family, PieceIndex = Desired.Piece, Width = 1, Depth = 1 });
   }
   return Result;
 }
 
 Boolean PlaceFreeform1x1(Int3[] _Selection, Text _Family) {
   return ExecutePlacementPlan(ResolveFreeform1x1(_Selection, _Family));
+}
+
+Integer Private_GetRemovalSupportHeight(Integer _X, Integer _Z, Text _Support) {
+  declare Column = <_X, 0, _Z>;
+  declare Height = -1;
+  if (G_ItemBlockSupports.existskey(_Support) && G_ItemBlockSupports[_Support] == G_BaseGroundGroup) {
+    GetFakeGroundHeight(_X, _Z);
+    if (G_RemovedWaterGroundHeights.existskey(Column)) {
+      Height = G_RemovedWaterGroundHeights[Column];
+    } else {
+      Height = GetGroundHeight(_X, _Z);
+    }
+    if (Height >= 0) {
+      Height += G_ItemBlockSelectionHeights[_Support];
+    }
+  } else {
+    Height = Private_GetGroupGroundHeight(_X, _Z, _Support);
+  }
+  return Height;
 }
 
 Boolean RemoveFreeform1x1(Int3[] _Selection, Text _Family) {
@@ -2300,6 +2562,30 @@ Boolean RemoveFreeform1x1(Int3[] _Selection, Text _Family) {
   declare Existing = GetItemBlockList();
   declare ItemBlock[] ToRemove;
   declare Boolean[Int3] RemovedCoords;
+  declare Boolean[Int3] RemovedShapeCoords;
+  declare HasDependents = False;
+  foreach (SupportRuleKey => SupportRuleValue in G_ItemBlockSupports) {
+    if (SupportRuleValue == _Family) {
+      HasDependents = True;
+    }
+  }
+  declare Integer[Int3] SupportHeights;
+  if (G_ItemBlockSupports.existskey(_Family)) {
+    declare SupportFamily = G_ItemBlockSupports[_Family];
+    foreach (SupportBlock in Existing) {
+      if (!SupportBlock.Ground || SupportBlock.Family != SupportFamily) {
+        continue;
+      }
+      for (X, SupportBlock.MacroblockCoord.X, SupportBlock.MacroblockCoord.X + MathLib::Max(1, SupportBlock.Width) - 1) {
+        for (Z, SupportBlock.MacroblockCoord.Z, SupportBlock.MacroblockCoord.Z + MathLib::Max(1, SupportBlock.Depth) - 1) {
+          declare Column = <X, 0, Z>;
+          if (!SupportHeights.existskey(Column) || SupportHeights[Column] < SupportBlock.MacroblockCoord.Y) {
+            SupportHeights[Column] = SupportBlock.MacroblockCoord.Y;
+          }
+        }
+      }
+    }
+  }
   foreach (Block in Existing) {
     if (!Selected.existskey(Block.MacroblockCoord) || Block.Family != _Family) {
       continue;
@@ -2307,8 +2593,20 @@ Boolean RemoveFreeform1x1(Int3[] _Selection, Text _Family) {
     if (!Block.Ground || Block.Width != 1 || Block.Depth != 1) {
       return False;
     }
+    if (HasDependents) {
+      foreach (Dependent in Existing) {
+        if (G_ItemBlockSupports.existskey(Dependent.Family) && G_ItemBlockSupports[Dependent.Family] == _Family && Dependent.Ground && Block.MacroblockCoord.X >= Dependent.MacroblockCoord.X && Block.MacroblockCoord.X < Dependent.MacroblockCoord.X + MathLib::Max(1, Dependent.Width) && Block.MacroblockCoord.Z >= Dependent.MacroblockCoord.Z && Block.MacroblockCoord.Z < Dependent.MacroblockCoord.Z + MathLib::Max(1, Dependent.Depth) && Dependent.MacroblockCoord.Y == Block.MacroblockCoord.Y + G_ItemBlockSelectionHeights[Dependent.Family]) {
+          return False;
+        }
+      }
+    }
     ToRemove.add(Block);
     RemovedCoords[Block.MacroblockCoord] = True;
+    if (Private_IsRaisedFreeformFiller(Block, _Family)) {
+      RemovedShapeCoords[<Block.MacroblockCoord.X, Block.MacroblockCoord.Y - Private_FreeformFillerHeight(_Family, 14), Block.MacroblockCoord.Z>] = True;
+    } else {
+      RemovedShapeCoords[Block.MacroblockCoord] = True;
+    }
   }
   if (ToRemove.count == 0) {
     return False;
@@ -2326,21 +2624,55 @@ Boolean RemoveFreeform1x1(Int3[] _Selection, Text _Family) {
   declare Integer[Int3] SideMasks;
   declare Integer[Int3] DiagonalMasks;
   declare ItemBlock[] Neighbors;
+  declare RaisedFillerHeight = Private_FreeformFillerHeight(_Family, 14);
+  if (RaisedFillerHeight > 0 && G_ItemBlockSupports.existskey(_Family)) {
+    foreach (Block in Existing) {
+      if (Block.Family != _Family || !Block.Ground || Block.Width != 1 || Block.Depth != 1 || Block.MacroblockCoord.X < MinX - 2 || Block.MacroblockCoord.X > MaxX + 2 || Block.MacroblockCoord.Z < MinZ - 2 || Block.MacroblockCoord.Z > MaxZ + 2) {
+        continue;
+      }
+      declare Column = <Block.MacroblockCoord.X, 0, Block.MacroblockCoord.Z>;
+      declare Integer BaseY;
+      if (SupportHeights.existskey(Column)) {
+        BaseY = SupportHeights[Column];
+      } else {
+        BaseY = Private_GetRemovalSupportHeight(Block.MacroblockCoord.X, Block.MacroblockCoord.Z, G_ItemBlockSupports[_Family]);
+      }
+      declare VirtualY = Block.MacroblockCoord.Y - RaisedFillerHeight;
+      declare FirstVirtual = True;
+      while (VirtualY >= BaseY && VirtualY >= 0) {
+        if (!FirstVirtual || !RemovedCoords.existskey(Block.MacroblockCoord) || !Private_IsRaisedFreeformFiller(Block, _Family)) {
+          declare VirtualCoord = <Block.MacroblockCoord.X, VirtualY, Block.MacroblockCoord.Z>;
+          SideMasks[VirtualCoord] = 15;
+          DiagonalMasks[VirtualCoord] = 15;
+        }
+        FirstVirtual = False;
+        VirtualY -= RaisedFillerHeight;
+      }
+    }
+  }
   foreach (Block in Existing) {
     if (Block.Family != _Family || !Block.Ground || Block.Width != 1 || Block.Depth != 1 || RemovedCoords.existskey(Block.MacroblockCoord)) {
       continue;
     }
-    declare Coord = Block.MacroblockCoord;
+    declare IsRaisedFiller = Private_IsRaisedFreeformFiller(Block, _Family);
+    declare Int3 Coord;
+    if (IsRaisedFiller) {
+      Coord = <Block.MacroblockCoord.X, Block.MacroblockCoord.Y - RaisedFillerHeight, Block.MacroblockCoord.Z>;
+    } else {
+      Coord = Block.MacroblockCoord;
+    }
     if (Coord.X < MinX - 2 || Coord.X > MaxX + 2 || Coord.Z < MinZ - 2 || Coord.Z > MaxZ + 2) {
       continue;
     }
-    declare LogicalDirection = Private_LogicalFreeformDirectionFor(Block);
-    SideMasks[Coord] = Private_FreeformSideMask(Block.PieceIndex, LogicalDirection);
-    DiagonalMasks[Coord] = Private_FreeformDiagonalMask(Block.PieceIndex, LogicalDirection);
+    if (!IsRaisedFiller) {
+      declare LogicalDirection = Private_LogicalFreeformDirectionFor(Block);
+      SideMasks[Coord] = Private_FreeformSideMask(Block.PieceIndex, LogicalDirection);
+      DiagonalMasks[Coord] = Private_FreeformDiagonalMask(Block.PieceIndex, LogicalDirection);
+    }
     declare TouchesRemoval = False;
     for (Dx, -1, 1) {
       for (Dz, -1, 1) {
-        if (RemovedCoords.existskey(<Coord.X + Dx, Coord.Y, Coord.Z + Dz>)) {
+        if (RemovedShapeCoords.existskey(<Coord.X + Dx, Coord.Y, Coord.Z + Dz>)) {
           TouchesRemoval = True;
         }
       }
@@ -2352,8 +2684,13 @@ Boolean RemoveFreeform1x1(Int3[] _Selection, Text _Family) {
   declare HasFiller = Private_VariantFor(_Family, 14, True, ToRemove[0].MacroblockCoord).MacroblockName != "";
   declare Placement[] Plan;
   foreach (Block in Neighbors) {
-    declare Coord = Block.MacroblockCoord;
-    declare Desired = ResolveFreeformRemovalCell(SideMasks, DiagonalMasks, RemovedCoords, Coord, Block.PieceIndex, Private_LogicalFreeformDirectionFor(Block), HasFiller);
+    declare Int3 Coord;
+    if (Private_IsRaisedFreeformFiller(Block, _Family)) {
+      Coord = <Block.MacroblockCoord.X, Block.MacroblockCoord.Y - RaisedFillerHeight, Block.MacroblockCoord.Z>;
+    } else {
+      Coord = Block.MacroblockCoord;
+    }
+    declare Desired = ResolveFreeformRemovalCell(SideMasks, DiagonalMasks, RemovedShapeCoords, Coord, Block.PieceIndex, Private_LogicalFreeformDirectionFor(Block), HasFiller);
     if (Block.PieceIndex == Desired.Piece && Private_LogicalFreeformDirectionFor(Block) == Desired.Direction) {
       continue;
     }
@@ -2361,7 +2698,46 @@ Boolean RemoveFreeform1x1(Int3[] _Selection, Text _Family) {
     if (Variant.MacroblockName == "") {
       return False;
     }
-    Plan.add(Placement { Coord = Coord, MacroblockName = Variant.MacroblockName, Direction = Private_OffsetDirection(Desired.Direction, Variant.DirectionOffset + Private_FreeformModelDirectionOffset(Desired.Piece)), Ground = True, Family = _Family, PieceIndex = Desired.Piece, Width = 1, Depth = 1 });
+    declare FillerHeight = Private_FreeformFillerHeight(_Family, Desired.Piece);
+    declare PlacedAt = <Coord.X, Coord.Y + FillerHeight, Coord.Z>;
+    if (!Private_WithinMap(PlacedAt)) {
+      return False;
+    }
+    declare ChangesHeight = !Private_SameCoord(PlacedAt, Block.MacroblockCoord);
+    Plan.add(Placement { Coord = PlacedAt, HasReplacementCoord = ChangesHeight, ReplacementCoord = Block.MacroblockCoord, MacroblockName = Variant.MacroblockName, Direction = Private_OffsetDirection(Desired.Direction, Variant.DirectionOffset + Private_FreeformModelDirectionOffset(Desired.Piece)), Ground = True, Family = _Family, PieceIndex = Desired.Piece, Width = 1, Depth = 1 });
+  }
+  if (G_ItemBlockSupports.existskey(_Family) && G_ItemBlockSupports[_Family] != G_BaseGroundGroup && G_ItemBlockSupportPieces[_Family] >= 0 && G_ItemBlockSelectionHeights[_Family] == 0) {
+    declare Support = G_ItemBlockSupports[_Family];
+    declare Piece = G_ItemBlockSupportPieces[_Family];
+    foreach (Block in ToRemove) {
+      declare ReplacementFamily = Support;
+      declare ReplacementPiece = Piece;
+      declare ReplacementCoord = Block.MacroblockCoord;
+      declare Column = <Block.MacroblockCoord.X, 0, Block.MacroblockCoord.Z>;
+      declare Integer BaseHeight;
+      if (SupportHeights.existskey(Column)) {
+        BaseHeight = SupportHeights[Column];
+      } else {
+        BaseHeight = Private_GetRemovalSupportHeight(Block.MacroblockCoord.X, Block.MacroblockCoord.Z, Support);
+      }
+      if (Block.MacroblockCoord.Y > BaseHeight) {
+        if (Block.PieceIndex != 14) {
+          ReplacementFamily = _Family;
+          ReplacementPiece = 14;
+        } else {
+          ReplacementCoord = <ReplacementCoord.X, ReplacementCoord.Y - Private_FreeformFillerHeight(_Family, 14), ReplacementCoord.Z>;
+          if (ReplacementCoord.Y > BaseHeight) {
+            ReplacementFamily = _Family;
+            ReplacementPiece = 14;
+          }
+        }
+      }
+      declare Variant = Private_VariantFor(ReplacementFamily, ReplacementPiece, True, ReplacementCoord);
+      if (Variant.MacroblockName == "") {
+        return False;
+      }
+      Plan.add(Placement { Coord = ReplacementCoord, MacroblockName = Variant.MacroblockName, Direction = Private_OffsetDirection(CMapEditorPlugin::CardinalDirections::North, Variant.DirectionOffset), Ground = True, Family = ReplacementFamily, PieceIndex = ReplacementPiece, Width = 1, Depth = 1 });
+    }
   }
   declare CMacroblockModel BaseMacroblock;
   if (G_NoItemBlockName == "") {
@@ -2385,6 +2761,9 @@ Boolean RemoveFreeform1x1(Int3[] _Selection, Text _Family) {
   }
   foreach (Entry in Plan) {
     AffectedCells[Entry.Coord] = True;
+    if (Entry.HasReplacementCoord) {
+      AffectedCells[Entry.ReplacementCoord] = True;
+    }
     MinX = MathLib::Min(MinX, Entry.Coord.X);
     MaxX = MathLib::Max(MaxX, Entry.Coord.X);
     MinZ = MathLib::Min(MinZ, Entry.Coord.Z);

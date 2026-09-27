@@ -43,6 +43,31 @@ As item's ground is technically not the official ground, there are two variants 
 
 Fake-ground item heights are cached by XZ footprint and rebuilt when tracked item blocks change. Real-ground height is queried live so terrain edits remain visible.
 
+Ground2D item groups may call `SetItemBlockGroundPlacement(family, selectionHeight,
+allowedOnGroup, allowedSupportPiece)`. The selection height is a cell offset above
+the named support; `-1` allows any support piece.
+`SetBaseGroundGroup` names the untracked map base; tracked support groups are checked
+per selected cell. Select the active family with `SetGroundSelectionGroup` before a
+Ground2D or RemoveItemGroup drag. In the Lagoon map, BayDocks use height 0 on the
+BaySea base, while BayEsplanade uses height 0 on BayDocks' final filler piece
+(index 14). Placing an esplanade replaces that filler; removing it restores the
+filler.
+`SetGroundSelectionDisplay(family, cursorOffset, previewHeight)` controls the
+editor cursor and custom-selection preview separately from placement height.
+BayEsplanade displays the cursor one cell above its placement and a four-cell
+preview extending upward from that cursor.
+Raised ground cursors use `GetMouseCoordAtHeight` for the visible cursor plane.
+Atlas checks the available support heights under the pointer and uses the highest
+valid one, while keeping the selected placement coordinates at their support height.
+`SetFreeformFillerHeight(family, height)` raises an interior freeform filler above
+the piece it replaces. BayEsplanade uses BayHarborBase as its interior filler four
+cells higher; the raised filler can be selected and replaced by another Esplanade
+layer. Undo and redo include the source piece and raised filler in one edit.
+The raised filler is a placement support at its physical height and an occupied
+interior cell at the layer below. Removal uses that lower logical cell when
+choosing replacement pieces around a cutout, and replaces a neighboring raised
+BayHarborBase with the exposed BayEsplanade edge variant at that lower level.
+
 Collections with a placeholder item macroblock at `CollectionGroundY` can call
 `Atlas::SetNoItemBlockName("Path\\Placeholder.Macroblock.Gbx")`. A regular block
 name is also accepted. When placing a ground item block, Atlas removes matching
